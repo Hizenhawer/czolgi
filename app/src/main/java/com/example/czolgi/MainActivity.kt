@@ -1,11 +1,15 @@
 package com.example.czolgi
 
 import android.app.Activity
+import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED
 import android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.wifi.WifiManager
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
@@ -17,18 +21,34 @@ class MainActivity : AppCompatActivity() {
 
     lateinit var btAdapter: BluetoothAdapter
 
-    //Todo: BluetoothAdapter ACTION_STATE_CHANGED broadcast listener
+    private val myBroadcastReceiver = object : BroadcastReceiver(){
+        override fun onReceive(context: Context, intent: Intent) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                if (state == BluetoothAdapter.STATE_TURNING_OFF)
+                    finishAffinity()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         btAdapter = BluetoothAdapter.getDefaultAdapter()
-
         if (!btAdapter.isEnabled) {
             val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(intent, REQUEST_CODE_ENEBLE_BT)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val intentFilter = IntentFilter(ACTION_STATE_CHANGED)
+        registerReceiver(myBroadcastReceiver, intentFilter)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(myBroadcastReceiver)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
