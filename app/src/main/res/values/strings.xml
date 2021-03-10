@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">czolgi</string>
-    <string name="detected_tanks">Detected Tanks</string>
+    <string name="paired_tanks">Paired Tanks</string>
 </resources>

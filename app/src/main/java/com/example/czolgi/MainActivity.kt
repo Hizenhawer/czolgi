@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED
 import android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED
+import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -38,6 +39,8 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(intent, REQUEST_CODE_ENEBLE_BT)
         }
+
+        loadTanks()
     }
 
     override fun onStart() {
@@ -63,5 +66,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
+    private fun loadTanks() {
+       val pairedDevices = btAdapter.bondedDevices
+        TODO("Przefiltrowane sparowane czołgi nad niesparowanym z opcją sparowania. Jak filtrować?")
+//        pairedDevices.filter { btDevice -> btDevice. }
+    }
 }
