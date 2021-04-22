@@ -8,11 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
-import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.DataBindingUtil
 import androidx.navigation.findNavController
-import com.example.czolgi.bluetooth.BluetoothHendler
+import com.example.czolgi.bluetooth.BluetoothHandler
 import com.example.czolgi.databinding.ActivityMainBinding
 import java.util.logging.Logger
 
@@ -37,15 +36,8 @@ class MainActivity : AppCompatActivity() {
         binding = DataBindingUtil.setContentView(this, R.layout.activity_main)
         val navController = this.findNavController(R.id.myNavHostFragment)
 
-        print(BluetoothHendler.getInstance(this).address)
+        print(BluetoothHandler.getInstance(this).address)
 
-//        btAdapter = BluetoothAdapter.getDefaultAdapter()
-//        if (!btAdapter.isEnabled) {
-//            val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-//            startActivityForResult(intent, REQUEST_CODE_ENEBLE_BT)
-//        }
-
-//        loadTanks()
     }
 
     override fun onStart() {
@@ -76,6 +68,4 @@ class MainActivity : AppCompatActivity() {
         TODO("Przefiltrowane sparowane czołgi nad niesparowanym z opcją sparowania. Jak filtrować?")
 //        pairedDevices.filter { btDevice -> btDevice. }
     }
-
-    fun runAddTankActivity(view: View) {}
 }

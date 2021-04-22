@@ -13,9 +13,9 @@ import com.example.czolgi.databinding.FragmentChoseTankBinding
 
 class ChoseTankFragment : Fragment() {
 
-    companion object {
-        fun newInstance() = ChoseTankFragment()
-    }
+//    companion object {
+//        fun newInstance() = ChoseTankFragment()
+//    }
 
     private lateinit var viewModel: ChoseTankViewModel
 
@@ -35,7 +35,6 @@ class ChoseTankFragment : Fragment() {
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         super.onActivityCreated(savedInstanceState)
         viewModel = ViewModelProvider(this).get(ChoseTankViewModel::class.java)
-        // TODO: Use the ViewModel
     }
 
 }
