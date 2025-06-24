@@ -102,10 +102,6 @@ class MainActivity : AppCompatActivity() {
         setupBondStateReceiver()
         checkAndRequestBlePermissions() // Start the permission and Bluetooth check flow
 
-        // Observe logs from ViewModel (optional, useful for debugging from Activity level)
-        bleViewModel.logMessages.observe(this) { log ->
-            Log.d("BleViewModelLog", log) // Log it here or display in a dedicated debug area
-        }
         bleViewModel.connectionStatus.observe(this) { status ->
             Log.d(TAG, "ViewModel Connection Status: $status")
             // You could update a global status indicator in the activity's toolbar if desired,

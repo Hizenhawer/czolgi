@@ -1,398 +1,307 @@
-package com.example.czolg3.ble
+package com.example.czolg3.ble // Adjust package name as needed
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Application
-import android.bluetooth.*
-import android.bluetooth.le.ScanCallback
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.le.ScanFilter
-import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
-import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.ParcelUuid
 import android.util.Log
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import java.util.*
 
-// Replace with your ESP32's details
-private const val ESP32_DEVICE_NAME = "ESP32_Echo" // Or whatever name your ESP32 advertises
-private val ECHO_SERVICE_UUID = UUID.fromString("12345678-1234-1234-1234-1234567890ab") // *** REPLACE THIS ***
-private val ECHO_CHARACTERISTIC_UUID = UUID.fromString("87654321-4321-4321-4321-ba0987654321") // *** REPLACE THIS ***
-private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb") // Client Characteristic Configuration Descriptor
-
-@SuppressLint("MissingPermission") // Permissions will be checked before calling these methods
 class BleViewModel(application: Application) : AndroidViewModel(application) {
-
     private val TAG = "BleViewModel"
 
-    private val bluetoothManager = application.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    private val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
+    private val bleManager = BleManager(application)
+    private val commandLoopController: CommandLoopController
 
-    private var bluetoothGatt: BluetoothGatt? = null
-    private var echoCharacteristic: BluetoothGattCharacteristic? = null
+    // ViewModel's own scope for UI related coroutines or tasks that need ViewModel's lifecycle
+    private val viewModelUIScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _connectionStatus = MutableLiveData<String>("Disconnected")
     val connectionStatus: LiveData<String> = _connectionStatus
 
-    private val _receivedData = MutableLiveData<String>()
+    private val _receivedData = MutableLiveData<String>() // For data from ESP32 notifications/reads
     val receivedData: LiveData<String> = _receivedData
 
-    private val _logMessages = MutableLiveData<String>()
-    val logMessages: LiveData<String> = _logMessages
+    private val _operationLog = MutableLiveData<StringBuilder>(StringBuilder("Logs:\n"))
+    val operationLog: LiveData<StringBuilder> = _operationLog
 
-    private val viewModelJob = Job()
-    private val uiScope = CoroutineScope(Dispatchers.Main + viewModelJob)
+    // LiveData to expose loop active state to UI
+    private val _isLightsLoopUiActive = MutableLiveData<Boolean>(false)
+    val isLightsLoopUiActive: LiveData<Boolean> = _isLightsLoopUiActive
 
-    private var isScanning = false
-    private val scanHandler = Handler(Looper.getMainLooper())
-    private val SCAN_PERIOD: Long = 10000 // Stop scanning after 10 seconds
+    private var targetDevice: BluetoothDevice? = null
+    // Storing the characteristic if specific properties need to be checked often,
+    // otherwise, BleManager handles it.
+    private var identifiedEchoCharacteristic: BluetoothGattCharacteristic? = null
 
-    private fun addLog(message: String) {
-        Log.d(TAG, message)
-//        _logMessages.postValue("${_logMessages.value ?: ""}\n$message")
+    init {
+        commandLoopController = CommandLoopController(
+            scope = viewModelScope, // Use viewModelScope for the command loop's lifecycle
+            commandSender = { command ->
+                // This suspend lambda will be called by CommandLoopController
+                // It's a suspending function if BleManager.writeCharacteristic is suspend,
+                // or returns a boolean indicating if the write was successfully initiated.
+                // For simplicity, assuming writeCharacteristic is effectively synchronous or handles its own async nature.
+                val success = bleManager.writeCharacteristic(
+                    BleConstants.ECHO_SERVICE_UUID,
+                    BleConstants.ECHO_CHARACTERISTIC_UUID,
+                    command.toByteArray(Charsets.UTF_8)
+                    // Consider write type if needed, e.g., BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                )
+                // Return true if the write was initiated, false otherwise.
+                // The CommandLoopController uses this to decide if it should stop.
+                success
+            },
+            logUpdater = { message -> addLog("[LoopCtrl] $message") }
+        )
+        observeBleEvents()
     }
 
-    // --- Scanning ---
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            super.onScanResult(callbackType, result)
-            Log.i("BleViewModel_ScanCb", "onScanResult CALLED. Device: ${result?.device?.address}")
-            // Temporarily comment out all other logic in here
-            // addLog("Scan Result: ${result.device.address}")
-            // if (result.device.name == ESP32_DEVICE_NAME) { ... }
+    private fun addLog(message: String, level: Int = Log.INFO) {
+        // Log to Android's Logcat
+        when(level) {
+            Log.DEBUG -> Log.d(TAG, message)
+            Log.INFO -> Log.i(TAG, message)
+            Log.WARN -> Log.w(TAG, message)
+            Log.ERROR -> Log.e(TAG, message)
+            else -> Log.v(TAG, message) // Default to verbose
         }
 
-        override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-            super.onBatchScanResults(results)
-            Log.i("BleViewModel_ScanCb", "onBatchScanResults CALLED. Count: ${results?.size}")
-            // Temporarily comment out all other logic
-        }
-
-        override fun onScanFailed(errorCode: Int) {
-            super.onScanFailed(errorCode)
-            Log.e("BleViewModel_ScanCb", "onScanFailed CALLED. ErrorCode: $errorCode")
-            // Temporarily comment out all other logic
-            // addLog("BLE Scan Failed: $errorCode")
-            // _connectionStatus.postValue("Scan Failed")
-            // isScanning = false
-        }
-    }
-
-    fun startScan() {
-        if (!hasRequiredBluetoothPermissions()) {
-            addLog("Bluetooth permissions not granted.")
-            _connectionStatus.postValue("Permissions missing")
-            return
-        }
-        if (bluetoothLeScanner == null) {
-            addLog("ERROR: bluetoothLeScanner is null. Cannot start scan.")
-            _connectionStatus.postValue("BLE Scanner Error")
-            return
-        }
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
-            addLog("Bluetooth is not enabled.")
-            _connectionStatus.postValue("Bluetooth off")
-            // You might want to trigger a request to enable Bluetooth here
-            return
-        }
-        val context = getApplication<Application>().applicationContext
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Log.d(TAG, "BLUETOOTH_SCAN granted: ${ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED}")
-            Log.d(TAG, "BLUETOOTH_CONNECT granted: ${ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED}")
-        } else {
-            Log.d(TAG, "ACCESS_FINE_LOCATION granted: ${ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED}")
-            Log.d(TAG, "BLUETOOTH granted: ${ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED}")
-            Log.d(TAG, "BLUETOOTH_ADMIN granted: ${ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED}")
-        }
-
-        if (!hasRequiredBluetoothPermissions()) { // Ensure this method accurately reflects the checks above
-            addLog("Bluetooth permissions not granted AT THE MOMENT OF SCAN START.")
-            _connectionStatus.postValue("Permissions missing")
-            return
-        }
-
-        if (isScanning) {
-            addLog("Already scanning.")
-            return
-        }
-
-        addLog("Starting BLE scan...")
-        _connectionStatus.postValue("Scanning...")
-        isScanning = true
-
-        // Stop scanning after a defined period.
-        scanHandler.postDelayed({
-            if (isScanning) {
-                addLog("Scan timeout.")
-                stopScan()
-                _connectionStatus.postValue("Device not found")
+        // Update LiveData for UI display, ensuring it's on the main thread
+        viewModelUIScope.launch {
+            val currentLog = _operationLog.value ?: StringBuilder("Logs:\n")
+            // Simple log length limiting for the UI
+            if (currentLog.lines().size > 200) {
+                val lines = currentLog.toString().lines()
+                currentLog.clear()
+                // Keep the last 100 lines
+                lines.drop(lines.size - 100).forEach { currentLog.append(it).append("\n") }
             }
-        }, SCAN_PERIOD)
+            currentLog.append(message).append("\n")
+            _operationLog.setValue(currentLog) // Use setValue as we are on the Main thread (viewModelUIScope)
+        }
+    }
+
+    private fun observeBleEvents() {
+        bleManager.bleEvents
+            .onEach { event ->
+                // Process events, ensuring UI updates are on the main thread
+                // viewModelUIScope.launch { // Already launched in this scope
+                when (event) {
+                    is BleEvent.LogMessage -> {
+                        addLog("[BleMgr] ${event.message}", event.level)
+                    }
+                    is BleEvent.ScanResultFound -> {
+                        // Example: Only connect to the first found target device matching the name
+                        if (targetDevice == null && event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
+                            addLog("Target ESP32 found: ${event.deviceName} (${event.device.address}) RSSI: ${event.rssi}")
+                            bleManager.stopScan() // Stop scan once target is identified
+                            targetDevice = event.device // Store the device
+                            _connectionStatus.postValue("Device Found, Connecting...")
+                            bleManager.connect(event.device)
+                        } else if (event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
+                            // Log if target found again but already processing one or connected
+                            addLog("Target ESP32 (${event.deviceName}) found again, already have a target or connected.", Log.DEBUG)
+                        }
+                    }
+                    is BleEvent.ScanFailed -> {
+                        addLog("Scan Failed: ${event.errorCode}", Log.ERROR)
+                        _connectionStatus.postValue("Scan Failed (${event.errorCode})")
+                    }
+                    is BleEvent.ConnectionStateChanged -> {
+                        addLog("Connection Status: ${event.statusMessage} for ${event.deviceAddress} (GATT: ${event.gattStatusCode}, Profile: ${event.bleProfileState})")
+                        _connectionStatus.postValue(event.statusMessage) // e.g., "Connected", "Disconnected", "Connection Error"
+
+                        if (event.statusMessage != "Connected") {
+                            // If disconnected or connection error, stop any active loops and clear device info
+                            if (_isLightsLoopUiActive.value == true) { // Check if loop was active
+                                commandLoopController.stopLightsCommandLoop()
+                                _isLightsLoopUiActive.postValue(false) // Update UI state
+                            }
+                            targetDevice = null
+                            identifiedEchoCharacteristic = null
+                        }
+                    }
+                    is BleEvent.ServicesDiscovered -> {
+                        addLog("Services Discovered. Looking for ECHO service...")
+                        // After services are discovered, you need to find your specific service and characteristic.
+                        // This logic could also be in BleManager which then emits a more specific event
+                        // if it had the UUIDs. For now, ViewModel does it.
+
+                        // Attempt to get the GATT instance to find service/characteristic
+                        // This part is tricky as BleManager encapsulates gatt.
+                        // A better approach: BleManager emits the characteristic if found, or an event if not.
+                        // For this example, we assume ViewModel would need to ask BleManager to find it.
+                        // OR, if BleManager emits a generic ServicesDiscovered, ViewModel iterates.
+                        // Let's assume for now, we'd need a way to get the characteristic.
+                        // For simplicity, we'll proceed as if we can get it or BleManager confirmed it.
+
+                        // Hypothetically, if BleManager confirmed characteristic readiness:
+                        // identifiedEchoCharacteristic = theCharacteristicFromBleManagerEvent;
+
+                        // For now, let's proceed to enable notifications and start loop as if char is ready.
+                        // In a real scenario, BleManager would emit an event like "EchoCharacteristicReady"
+                        _connectionStatus.postValue("Services Ready, Initializing...")
+
+                        // Enable notifications for the ECHO characteristic
+                        val successNotifications = bleManager.enableNotifications(
+                            BleConstants.ECHO_SERVICE_UUID,
+                            BleConstants.ECHO_CHARACTERISTIC_UUID
+                        )
+                        if (successNotifications) {
+                            addLog("Notifications enabling initiated for ECHO characteristic.")
+                        } else {
+                            addLog("Failed to initiate notifications for ECHO characteristic.", Log.WARN)
+                            // Consider disconnecting or other error handling
+                        }
+
+                        // Start the command loop if not already active
+                        if (_isLightsLoopUiActive.value == false) {
+                            toggleLightsLoop() // This will check connection status again
+                        }
+                    }
+                    is BleEvent.ServiceDiscoveryFailed -> {
+                        addLog("Service Discovery Failed (GATT Status: ${event.gattStatusCode})", Log.ERROR)
+                        _connectionStatus.postValue("Service Discovery Failed")
+                        bleManager.disconnect() // Disconnect if services can't be resolved
+                    }
+                    is BleEvent.CharacteristicChanged -> {
+                        if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
+                            val value = event.value.decodeToString()
+                            addLog("Data received from ESP32 (Echo): $value")
+                            _receivedData.postValue(value)
+                        }
+                    }
+                    is BleEvent.CharacteristicWritten -> {
+                        if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
+                            if (event.gattStatusCode == BluetoothGatt.GATT_SUCCESS) {
+                                // addLog("Write to ECHO characteristic successful.", Log.DEBUG)
+                            } else {
+                                addLog("Write to ECHO characteristic failed. Status: ${event.gattStatusCode}", Log.WARN)
+                                // If a write fails within the loop, the loop controller should handle stopping.
+                            }
+                        }
+                    }
+                    is BleEvent.DescriptorWritten -> {
+                        if (event.descriptorUuid == BleConstants.CCCD_UUID) {
+                            if (event.gattStatusCode == BluetoothGatt.GATT_SUCCESS) {
+                                addLog("Notification descriptor for ECHO written successfully.")
+                                _connectionStatus.postValue("Ready") // Device is fully ready now
+                            } else {
+                                addLog("Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}", Log.WARN)
+                                _connectionStatus.postValue("Notification Setup Failed")
+                            }
+                        }
+                    }
+                    // Handle other specific events like CharacteristicRead if used
+                    else -> {
+                        // addLog("Unhandled BleEvent: $event", Log.DEBUG)
+                    }
+                }
+                // }
+            }
+            .catch { e ->
+                // Handle any exceptions from the flow collection itself
+                addLog("Error in BLE event observer: ${e.message}", Log.ERROR)
+                _connectionStatus.postValue("Error")
+                commandLoopController.stopLightsCommandLoop()
+                _isLightsLoopUiActive.postValue(false)
+
+            }
+            .launchIn(viewModelScope) // Use viewModelScope for automatic cancellation
+    }
+
+    fun startBleScan() {
+        addLog("Scan requested from UI.")
+        // Optionally, check for Bluetooth adapter status or permissions here again,
+        // though BleManager also checks.
+        _connectionStatus.postValue("Scanning...")
 
         val filters: MutableList<ScanFilter> = ArrayList()
-        // You can filter by name if your device advertises it, or by service UUID
-//        val scanFilter = ScanFilter.Builder()
-//             .setDeviceName(ESP32_DEVICE_NAME) // More reliable to connect by name/address after discovery
-//            .setServiceUuid(ParcelUuid(ECHO_SERVICE_UUID)) // Filter by your service if ESP32 advertises it
-//            .build()
-//         filters.add(scanFilter) // Uncomment if your ESP32 advertises the service UUID
+        // Example: Filter by device name. ESP32 must advertise this name.
+        // val scanFilter = ScanFilter.Builder()
+        // .setDeviceName(BleConstants.ESP32_DEVICE_NAME)
+        // .build()
+        // filters.add(scanFilter)
+        // If no filters are added, BleManager will scan for all devices.
+        // The ViewModel then filters by name in ScanResultFound.
 
         val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY) // Use for active scanning
+            // .setReportDelay(0) // Report results immediately (default)
             .build()
 
-        // If no filters, scan for all devices and then filter by name in onScanResult
-//        bluetoothLeScanner?.startScan(if (filters.isEmpty()) null else filters, settings, scanCallback)
-        bluetoothLeScanner.startScan(scanCallback)
-        addLog("Scanning with NO filters (temporary for debugging)")
+        bleManager.startScan(if (filters.isEmpty()) null else filters, settings)
     }
 
-    fun stopScan() {
-        if (isScanning && bluetoothAdapter != null && bluetoothAdapter.isEnabled && hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
-            bluetoothLeScanner?.stopScan(scanCallback)
-        }
-        isScanning = false
-        addLog("Scan stopped.")
+    fun stopBleScan() {
+        addLog("Stop scan requested from UI.")
+        bleManager.stopScan()
+        // Connection status will be updated by ScanFailed or timeout event from BleManager if no device was found
     }
 
-    // --- Connection ---
-    private fun connectToDevice(device: BluetoothDevice) {
-        addLog("Connecting to ${device.address}...")
-        _connectionStatus.postValue("Connecting...")
-        // Ensure GATT is closed if already connected to another device or for retry
-        bluetoothGatt?.close()
-        bluetoothGatt = device.connectGatt(getApplication(), false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+    fun disconnectDevice() {
+        addLog("Disconnect requested from UI.")
+        commandLoopController.stopLightsCommandLoop() // Stop loop before disconnecting
+        _isLightsLoopUiActive.postValue(false)
+        bleManager.disconnect()
+        // Connection status will be updated via BleEvent.ConnectionStateChanged
     }
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            val deviceAddress = gatt.device.address
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    addLog("Connected to $deviceAddress")
-                    _connectionStatus.postValue("Connected")
-                    bluetoothGatt = gatt // Store the GATT instance
-                    // Discover services after successful connection
-                    uiScope.launch { // Use coroutine for delay
-                        delay(600) // Short delay sometimes helps service discovery on some devices
-                        bluetoothGatt?.discoverServices()
-                    }
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    addLog("Disconnected from $deviceAddress")
-                    _connectionStatus.postValue("Disconnected")
-                    gatt.close()
-                    bluetoothGatt = null
-                    echoCharacteristic = null
-                }
-            } else {
-                addLog("Connection Error for $deviceAddress: $status")
-                _connectionStatus.postValue("Connection Error: $status")
-                gatt.close()
-                bluetoothGatt = null
-                echoCharacteristic = null
-                // Consider attempting a reconnect here or notifying the user
-                // startScan() // Optionally try to rescan
-            }
-        }
-
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                addLog("Services Discovered for ${gatt.device.address}")
-                val service = gatt.getService(ECHO_SERVICE_UUID)
-                if (service == null) {
-                    addLog("Echo Service not found!")
-                    _connectionStatus.postValue("Service Not Found")
-                    return
-                }
-                echoCharacteristic = service.getCharacteristic(ECHO_CHARACTERISTIC_UUID)
-                if (echoCharacteristic == null) {
-                    addLog("Echo Characteristic not found!")
-                    _connectionStatus.postValue("Characteristic Not Found")
-                    return
-                }
-                addLog("Echo Characteristic found. Ready to communicate.")
-                _connectionStatus.postValue("Ready")
-                enableNotifications(gatt, echoCharacteristic!!) // Enable notifications for echo
-            } else {
-                addLog("Service discovery failed with status: $status")
-                _connectionStatus.postValue("Service Discovery Failed")
-            }
-        }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (characteristic.uuid == ECHO_CHARACTERISTIC_UUID) {
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    addLog("Write successful: ${String(characteristic.value, Charsets.UTF_8)}")
-                } else {
-                    addLog("Write failed: $status")
-                }
-            }
-        }
-
-        // Called when data is received via notification (echoed back)
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            if (characteristic.uuid == ECHO_CHARACTERISTIC_UUID) {
-                val receivedValue = String(value, Charsets.UTF_8)
-                addLog("Received from ESP32: $receivedValue")
-                _receivedData.postValue(receivedValue) // Update LiveData for UI
-            }
-        }
-        // For Android 12 and below
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                if (characteristic.uuid == ECHO_CHARACTERISTIC_UUID) {
-                    val receivedValue = String(characteristic.value, Charsets.UTF_8)
-                    addLog("Received from ESP32 (legacy): $receivedValue")
-                    _receivedData.postValue(receivedValue) // Update LiveData for UI
-                }
-            }
-        }
-
-
-        // For reading characteristics (if your echo service requires explicit read after write)
-        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int ) {
-            if (characteristic.uuid == ECHO_CHARACTERISTIC_UUID) {
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    val receivedValue = String(value, Charsets.UTF_8)
-                    addLog("Read from ESP32: $receivedValue")
-                    _receivedData.postValue(receivedValue)
-                } else {
-                    addLog("Read failed: $status")
-                }
-            }
-        }
-        // For Android 12 and below
-        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                if (characteristic.uuid == ECHO_CHARACTERISTIC_UUID) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        val receivedValue = String(characteristic.value, Charsets.UTF_8)
-                        addLog("Read from ESP32 (legacy): $receivedValue")
-                        _receivedData.postValue(receivedValue)
-                    } else {
-                        addLog("Read failed (legacy): $status")
-                    }
-                }
-            }
-        }
-
-
-        override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: BluetoothGattDescriptor?, status: Int) {
-            super.onDescriptorWrite(gatt, descriptor, status)
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                addLog("Notification descriptor written successfully.")
-            } else {
-                addLog("Failed to write notification descriptor: $status")
-            }
-        }
-    }
-
-    // --- Sending Data ---
-    fun sendText(text: String) {
-        if (bluetoothGatt == null || echoCharacteristic == null) {
-            addLog("Not connected or characteristic not found.")
-            _connectionStatus.postValue("Not Ready to Send")
-            return
-        }
-
-        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
-            addLog("BLUETOOTH_CONNECT permission not granted for sendText")
-            return
-        }
-
-        val data = text.toByteArray(Charsets.UTF_8)
-
-        // For Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            bluetoothGatt?.writeCharacteristic(
-                echoCharacteristic!!,
-                data,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT // Or WRITE_TYPE_NO_RESPONSE if your ESP32 doesn't send a write ack
+    // Example function to send a one-off command (not part of the loop)
+    fun sendCustomCommand(command: String) {
+        if (_connectionStatus.value == "Ready" || _connectionStatus.value == "Connected") { // Or just "Ready" if notifications are essential
+            addLog("Sending custom command: $command")
+            val success = bleManager.writeCharacteristic(
+                BleConstants.ECHO_SERVICE_UUID,
+                BleConstants.ECHO_CHARACTERISTIC_UUID,
+                command.toByteArray(Charsets.UTF_8)
             )
-        } else {
-            // For older versions
-            echoCharacteristic!!.value = data
-            echoCharacteristic!!.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            bluetoothGatt?.writeCharacteristic(echoCharacteristic!!)
-        }
-        addLog("Sent to ESP32: $text")
-    }
-
-    // --- Notifications ---
-    private fun enableNotifications(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
-            addLog("BLUETOOTH_CONNECT permission not granted for enableNotifications")
-            return
-        }
-
-        val cccd = characteristic.getDescriptor(CCCD_UUID)
-        if (cccd == null) {
-            addLog("CCCD not found for echo characteristic!")
-            return
-        }
-
-        if (gatt.setCharacteristicNotification(characteristic, true)) {
-            // For Android 13+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-            } else {
-                // For older versions
-                cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(cccd)
+            if (!success) {
+                addLog("Failed to initiate custom command send.", Log.WARN)
             }
-            addLog("Notifications enabled for echo characteristic.")
         } else {
-            addLog("Failed to enable notifications.")
+            addLog("Cannot send custom command: Not connected or ready. Status: ${_connectionStatus.value}", Log.WARN)
         }
     }
 
-
-    // --- Permissions ---
-    private fun hasPermission(permission: String): Boolean {
-        return ActivityCompat.checkSelfPermission(getApplication(), permission) == PackageManager.PERMISSION_GRANTED
-    }
-
-    fun hasRequiredBluetoothPermissions(): Boolean {
-        val context = getApplication<Application>().applicationContext
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // Android 12+
-            return ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-                    ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-        } else { // Android 11 and below
-            return ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
-                    ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED &&
-                    ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    fun toggleLightsLoop() {
+        if (_isLightsLoopUiActive.value == true) {
+            commandLoopController.stopLightsCommandLoop()
+            _isLightsLoopUiActive.postValue(false)
+        } else {
+            // Only start if connected and services are presumably ready
+            if (_connectionStatus.value == "Ready" || _connectionStatus.value == "Connected") { // Or just "Ready"
+                commandLoopController.startLightsCommandLoop()
+                _isLightsLoopUiActive.postValue(true)
+            } else {
+                addLog("Cannot start lights loop: Device not connected or ready. Status: ${_connectionStatus.value}", Log.WARN)
+            }
         }
     }
 
-
-    fun disconnect() {
-        addLog("Disconnecting...")
-        bluetoothGatt?.disconnect() // This will trigger onConnectionStateChange to STATE_DISCONNECTED where close() is called.
-        // bluetoothGatt?.close() // Don't call close() directly here, let the callback handle it.
-        bluetoothGatt = null
-        echoCharacteristic = null
-        _connectionStatus.postValue("Disconnected")
-    }
 
     override fun onCleared() {
         super.onCleared()
-        addLog("ViewModel cleared. Disconnecting GATT.")
-        disconnect()
-        viewModelJob.cancel()
-        scanHandler.removeCallbacksAndMessages(null) // Clean up handler
+        addLog("BleViewModel cleared. Cleaning up resources.", Log.DEBUG)
+        commandLoopController.cleanup() // Stop any active loops
+        bleManager.cleanup()         // Disconnect GATT, stop scan, release resources
+        viewModelScope.coroutineContext.cancelChildren() // Cancel any coroutines tied to viewModelScope
+        viewModelUIScope.coroutineContext.cancelChildren()
+        Log.i(TAG, "BleViewModel onCleared finished.")
     }
 }
