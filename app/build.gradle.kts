@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.compose.compiler)
 }
 
 android {
@@ -34,7 +35,10 @@ android {
         jvmTarget = "11"
     }
     buildFeatures {
-        viewBinding = true
+        compose = true // Enable Compose
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.6.7" // Or the latest compatible version
     }
 }
 
@@ -52,4 +56,28 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.00") // Check for the latest version
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    // Core Compose libraries
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.material3) // Or material if you prefer Material 2
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.navigation.compose.android)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.material.icons.extended.android)
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
+
+    // For observing LiveData as State in Compose
+    implementation(libs.androidx.runtime.livedata)
+
+    // For ViewModel integration
+    implementation(libs.androidx.lifecycle.viewmodel.compose) // Check for latest
 }
