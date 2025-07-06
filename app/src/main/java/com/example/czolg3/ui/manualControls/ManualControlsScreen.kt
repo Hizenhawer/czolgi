@@ -1,11 +1,14 @@
-package com.example.czolg3.ui.gallery
+package com.example.czolg3.ui.manualControls
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -13,13 +16,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-// import com.example.czolg3.ui.gallery.GalleryViewModel // Ensure import
-
-// @OptIn(ExperimentalMaterial3Api::class) // Not needed if Scaffold is removed
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
-fun GalleryScreen(galleryViewModel: GalleryViewModel, modifier: Modifier = Modifier) {
-    val textToShow by galleryViewModel.text.collectAsStateWithLifecycle()
+fun ManualControlsScreen(
+    manualControlsViewModel: ManualControlsViewModel, modifier: Modifier = Modifier,
+    onNavigateToFullScreen: () -> Unit = {}
+) {
+    val textToShow by manualControlsViewModel.text.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier // Apply modifier from NavHost (includes padding from MainActivity's Scaffold)
@@ -28,9 +32,10 @@ fun GalleryScreen(galleryViewModel: GalleryViewModel, modifier: Modifier = Modif
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = textToShow,
-            style = MaterialTheme.typography.headlineMedium
+        IconButton(
+            content = { Icon(Icons.Filled.Fullscreen, contentDescription = "Full screen") },
+            onClick = onNavigateToFullScreen,
+            modifier = Modifier.padding(0.dp)
         )
         // Add more Composable elements here as needed
     }
@@ -40,18 +45,11 @@ fun GalleryScreen(galleryViewModel: GalleryViewModel, modifier: Modifier = Modif
 @Preview(showBackground = true)
 @Composable
 fun GalleryScreenPreview() {
+    val manualControlsViewModel: ManualControlsViewModel =
+        viewModel()
     MaterialTheme {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Gallery Preview Text",
-                style = MaterialTheme.typography.headlineMedium
-            )
-        }
+        ManualControlsScreen(
+            manualControlsViewModel = manualControlsViewModel
+        )
     }
 }

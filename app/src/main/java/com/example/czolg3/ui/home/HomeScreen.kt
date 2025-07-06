@@ -53,7 +53,10 @@ fun HomeScreen(
         else -> true
     }
     val isScanButtonChecked = connectionStatus == "Scanning..." // "Scanning..." state from ViewModel
-    val isLightsLoopButtonEnabled = connectionStatus == "Ready"
+    val isLightsLoopButtonEnabled = when (connectionStatus) {
+        "Connected", "Ready" -> true
+        else -> false
+    }
 
     LaunchedEffect(operationLog.toString()) { // Trigger when operationLog content changes
         logScrollState.animateScrollTo(logScrollState.maxValue)

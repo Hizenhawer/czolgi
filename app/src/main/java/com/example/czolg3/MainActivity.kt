@@ -22,9 +22,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Games
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,25 +50,32 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import com.example.czolg3.ble.BleViewModel
-import com.example.czolg3.ui.gallery.GalleryScreen
-import com.example.czolg3.ui.gallery.GalleryViewModel
 import com.example.czolg3.ui.home.HomeScreen
 import com.example.czolg3.ui.home.HomeViewModel
+import com.example.czolg3.ui.manualControls.FullScreen
+import com.example.czolg3.ui.manualControls.ManualControlsScreen
+import com.example.czolg3.ui.manualControls.ManualControlsViewModel
 import com.example.czolg3.ui.slideshow.SlideshowScreen
 import com.example.czolg3.ui.slideshow.SlideshowViewModel
 import kotlinx.coroutines.launch
 
 // Define your navigation routes
 object AppDestinations {
+    const val MAIN_ACTIVITY_GRAPH_ROUTE = "mainActivityGraph"
     const val HOME_ROUTE = "home"
-    const val GALLERY_ROUTE = "gallery"
     const val SLIDESHOW_ROUTE = "slideshow"
+
+    const val MANUAL_CONTROLS_GRAPH_ROUTE = "manualControlsGraph"
+    const val MANUAL_CONTROLS_ROUTE = "manualControls"
+    const val MANUAL_CONTROLS_FULL_SCREEN_ROUTE = "MCFullScreen"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,21 +131,92 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
         }
 
         setContent {
-            // Your app's theme would wrap MainAppScreen
-            // AppTheme {
-            MainAppScreen(bleViewModel = bleViewModel)
-            // }
+            // Single NavController for the entire application
+            val navController = rememberNavController()
+
+            // Top-level NavHost
+            NavHost(
+                navController = navController,
+                // Start with the graph that contains your initial screen (e.g., home screen)
+                startDestination = AppDestinations.MAIN_ACTIVITY_GRAPH_ROUTE
+            ) {
+                // Define the nested graph for scaffolded (normal) screens
+                mainGraph(navController, bleViewModel)
+
+                // Define the nested graph for fullscreen screens
+                manualControlsGraph()
+
+                // You could also have top-level destinations here if needed,
+                // but for your case, graphs are cleaner.
+            }
         }
     }
 
 
+    // Extension function to define the scaffolded graph (keeps MainActivity cleaner)
+    private fun NavGraphBuilder.mainGraph(
+        navController: NavHostController,
+        bleViewModel: BleViewModel // Pass any necessary dependencies
+    ) {
+        navigation(
+            startDestination = AppDestinations.HOME_ROUTE, // Start of this sub-graph
+            route = AppDestinations.MAIN_ACTIVITY_GRAPH_ROUTE  // Route to this sub-graph
+        ) {
+            // Composable for MainAppScreen which provides the Scaffold
+            composable(AppDestinations.HOME_ROUTE) { // This route is a bit redundant if MainAppScreen is always the entry
+                // A more common pattern is to just define the content directly
+                // or make the graph's route the same as its startDestination.
+                // For clarity, let's assume MainAppScreen is the container.
+                MainAppScreen(
+                    mainNavController = navController, // Pass the same top-level controller
+                    bleViewModel = bleViewModel
+                    // The NavHost inside MainAppScreen will now define destinations WITHIN this scaffolded context
+                    // OR, MainAppScreen directly hosts its NavHost for its children.
+                    // Let's go with MainAppScreen hosting its own NavHost for its children
+                    // to maintain the original structure of MainAppScreen.
+                )
+            }
+            // If MainAppScreen itself hosts the NavHost for its children, then HOME_ROUTE, etc.,
+            // are defined *within* MainAppScreen's NavHost.
+            // The navigation call to this graph ("scaffolded_graph") will land you in MainAppScreen,
+            // which then uses its internal NavHost starting at HOME_ROUTE.
+        }
+    }
+
+
+    // Extension function to define the fullscreen graph
+    private fun NavGraphBuilder.manualControlsGraph() {
+        navigation(
+            startDestination = AppDestinations.MANUAL_CONTROLS_FULL_SCREEN_ROUTE, // Default fullscreen screen
+            route = AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE // Route to this sub-graph
+        ) {
+            composable(AppDestinations.MANUAL_CONTROLS_FULL_SCREEN_ROUTE) {
+                FullScreen() // Pass the same top-level controller
+            }
+            // Add other fullscreen destinations here if you have more
+            // Example:
+            // composable("another_fullscreen_route") { AnotherFullScreen(navController) }
+        }
+    }
+
+    // --- MainAppScreen Composable (Houses the Scaffold and its content's NavHost) ---
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun MainAppScreen(bleViewModel: BleViewModel) { // bleViewModel might not be needed by all screens
-        val navController = rememberNavController()
+    fun MainAppScreen(
+        mainNavController: NavHostController, // The NavController from MainActivity (for global navigation)
+        bleViewModel: BleViewModel
+    ) {
         val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
         val scope = rememberCoroutineScope()
-        val navBackStackEntry by navController.currentBackStackEntryAsState()
-        val currentRoute = navBackStackEntry?.destination?.route
+
+        // For the content *within* the Scaffold, we use a *new, nested* NavController.
+        // This simplifies managing the back stack and UI state (like TopAppBar title)
+        // for the screens that are part of the scaffolded layout.
+        val scaffoldContentNavController = rememberNavController()
+
+        // Observe the current route of the *nested* NavController for UI updates (drawer, title)
+        val scaffoldNavBackStackEntry by scaffoldContentNavController.currentBackStackEntryAsState()
+        val currentScaffoldRoute = scaffoldNavBackStackEntry?.destination?.route ?: AppDestinations.HOME_ROUTE
 
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -153,10 +231,10 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.Home, contentDescription = "Home") },
                         label = { Text("Home") },
-                        selected = currentRoute == AppDestinations.HOME_ROUTE,
+                        selected = currentScaffoldRoute == AppDestinations.HOME_ROUTE,
                         onClick = {
-                            navController.navigate(AppDestinations.HOME_ROUTE) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            scaffoldContentNavController.navigate(AppDestinations.HOME_ROUTE) {
+                                popUpTo(scaffoldContentNavController.graph.startDestinationId) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -164,39 +242,39 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                         }
                     )
                     NavigationDrawerItem(
-                        icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = "Gallery") }, // Changed icon
-                        label = { Text("Gallery") }, // Changed label
-                        selected = currentRoute == AppDestinations.GALLERY_ROUTE,
+                        icon = { Icon(Icons.Filled.Games, contentDescription = "Manual Controls") },
+                        label = { Text("Manual Controls") }, // This leads to the non-fullscreen version
+                        selected = currentScaffoldRoute == AppDestinations.MANUAL_CONTROLS_ROUTE,
                         onClick = {
-                            navController.navigate(AppDestinations.GALLERY_ROUTE) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            scaffoldContentNavController.navigate(AppDestinations.MANUAL_CONTROLS_ROUTE) {
+                                popUpTo(scaffoldContentNavController.graph.startDestinationId) { saveState = true }
                                 launchSingleTop = true
-                                restoreState = true // If you want to restore state when coming back
+                                restoreState = true
                             }
                             scope.launch { drawerState.close() }
                         }
                     )
                     NavigationDrawerItem(
-                        icon = { Icon(Icons.Filled.Slideshow, contentDescription = "Slideshow") }, // Example icon
+                        icon = { Icon(Icons.Filled.Slideshow, contentDescription = "Slideshow") },
                         label = { Text("Slideshow") },
-                        selected = currentRoute == AppDestinations.SLIDESHOW_ROUTE,
+                        selected = currentScaffoldRoute == AppDestinations.SLIDESHOW_ROUTE,
                         onClick = {
-                            navController.navigate(AppDestinations.SLIDESHOW_ROUTE) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            scaffoldContentNavController.navigate(AppDestinations.SLIDESHOW_ROUTE) {
+                                popUpTo(scaffoldContentNavController.graph.startDestinationId) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
                             scope.launch { drawerState.close() }
                         }
                     )
-                    // Add other drawer items if you have more routes
+                    // Add other drawer items for scaffolded screens
                 }
             }
         ) {
             Scaffold(
                 topBar = {
                     TopAppBar(
-                        title = { Text(currentRoute?.replaceFirstChar { it.titlecase() } ?: "Czolg3") },
+                        title = { Text(determineTitle(currentScaffoldRoute)) }, // Helper to get title
                         navigationIcon = {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                                 Icon(Icons.Filled.Menu, contentDescription = "Open Drawer")
@@ -205,46 +283,68 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                     )
                 }
             ) { paddingValues ->
-                AppNavHost(
-                    navController = navController,
-                    bleViewModel = bleViewModel, // Pass only if truly needed by multiple direct children of AppNavHost
-                    modifier = Modifier.padding(paddingValues)
+                // This NavHost is for the content *inside* the Scaffold
+                ScaffoldContentNavHost(
+                    modifier = Modifier.padding(paddingValues),
+                    scaffoldNavController = scaffoldContentNavController, // The nested NavController
+                    mainNavController = mainNavController,               // The top-level NavController (for navigating to fullscreen)
+                    bleViewModel = bleViewModel
                 )
             }
         }
     }
 
+    // --- NavHost for the content area of the Scaffold ---
     @Composable
-    fun AppNavHost(
-        navController: NavHostController,
-        bleViewModel: BleViewModel, // This ViewModel is specifically for BLE; other screens will get their own ViewModels
-        modifier: Modifier = Modifier
+    fun ScaffoldContentNavHost(
+        modifier: Modifier = Modifier,
+        scaffoldNavController: NavHostController, // For navigation within scaffolded screens
+        mainNavController: NavHostController,   // For navigation to other graphs (e.g., fullscreen)
+        bleViewModel: BleViewModel
     ) {
         NavHost(
-            navController = navController,
-            startDestination = AppDestinations.HOME_ROUTE,
+            navController = scaffoldNavController, // Use the NESTED NavController here
+            startDestination = AppDestinations.HOME_ROUTE, // Default screen within the scaffold
             modifier = modifier
         ) {
             composable(AppDestinations.HOME_ROUTE) {
-                val homeViewModel: HomeViewModel = viewModel() // If HomeScreen needs its own ViewModel
+                val homeViewModel: HomeViewModel = viewModel()
                 HomeScreen(
                     bleViewModel = bleViewModel,
-                    homeViewModel = homeViewModel // Pass it
+                    homeViewModel = homeViewModel
+                    // Pass scaffoldNavController if HomeScreen needs to navigate to other scaffolded screens
                 )
             }
-            composable(AppDestinations.GALLERY_ROUTE) {
-                // GalleryScreen gets its own GalleryViewModel
-                val galleryViewModel: GalleryViewModel =
-                    viewModel() // Hilt or default factory
-                GalleryScreen(galleryViewModel = galleryViewModel)
+            composable(AppDestinations.MANUAL_CONTROLS_ROUTE) { // The non-fullscreen one
+                val manualControlsViewModel: ManualControlsViewModel = viewModel()
+                ManualControlsScreen(
+                    manualControlsViewModel = manualControlsViewModel,
+                    onNavigateToFullScreen = {
+                        // Use the MAIN NavController to switch to the fullscreen GRAPH
+                        mainNavController.navigate(AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE)
+                    }
+                    // Pass scaffoldNavController if it needs to navigate to other scaffolded screens
+                )
             }
             composable(AppDestinations.SLIDESHOW_ROUTE) {
-                // SlideshowScreen gets its own SlideshowViewModel
-                val slideshowViewModel: SlideshowViewModel =
-                    viewModel() // Hilt or default factory
-                SlideshowScreen(slideshowViewModel = slideshowViewModel)
+                val slideshowViewModel: SlideshowViewModel = viewModel()
+                SlideshowScreen(
+                    slideshowViewModel = slideshowViewModel
+                    // Pass scaffoldNavController if it needs to navigate to other scaffolded screens
+                )
             }
-            // Add more composable routes here
+            // Add other destinations that appear within the Scaffold here
+        }
+    }
+
+    // Helper function to determine TopAppBar title (example)
+    @Composable
+    private fun determineTitle(route: String?): String {
+        return when (route) {
+            AppDestinations.HOME_ROUTE -> "Home"
+            AppDestinations.MANUAL_CONTROLS_ROUTE -> "Manual Controls"
+            AppDestinations.SLIDESHOW_ROUTE -> "Slideshow"
+            else -> "Czolg3"
         }
     }
 
@@ -255,26 +355,57 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
         bondStateReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == BluetoothDevice.ACTION_BOND_STATE_CHANGED) {
-                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    }
-                    val previousBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
-                    val currentBondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+                    val device: BluetoothDevice? =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(
+                                BluetoothDevice.EXTRA_DEVICE,
+                                BluetoothDevice::class.java
+                            )
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                        }
+                    val previousBondState = intent.getIntExtra(
+                        BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE,
+                        BluetoothDevice.ERROR
+                    )
+                    val currentBondState =
+                        intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
 
                     device?.let {
-                        val deviceName = if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                        val deviceName = if (ActivityCompat.checkSelfPermission(
+                                this@MainActivity,
+                                Manifest.permission.BLUETOOTH_CONNECT
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
                             it.name ?: "Unknown Device"
                         } else {
                             "Unknown (Permission Denied)"
                         }
-                        Log.d(TAG, "Bond state for '$deviceName' (${it.address}) changed: ${bondStateToString(previousBondState)} -> ${bondStateToString(currentBondState)}")
+                        Log.d(
+                            TAG,
+                            "Bond state for '$deviceName' (${it.address}) changed: ${
+                                bondStateToString(previousBondState)
+                            } -> ${bondStateToString(currentBondState)}"
+                        )
                         when (currentBondState) {
-                            BluetoothDevice.BOND_BONDED -> Toast.makeText(context, "$deviceName bonded", Toast.LENGTH_SHORT).show()
-                            BluetoothDevice.BOND_NONE -> if (previousBondState == BluetoothDevice.BOND_BONDING) Toast.makeText(context, "Bonding with $deviceName failed", Toast.LENGTH_SHORT).show()
-                            BluetoothDevice.BOND_BONDING -> Toast.makeText(context, "Pairing with $deviceName...", Toast.LENGTH_SHORT).show()
+                            BluetoothDevice.BOND_BONDED -> Toast.makeText(
+                                context,
+                                "$deviceName bonded",
+                                Toast.LENGTH_SHORT
+                            ).show()
+
+                            BluetoothDevice.BOND_NONE -> if (previousBondState == BluetoothDevice.BOND_BONDING) Toast.makeText(
+                                context,
+                                "Bonding with $deviceName failed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+
+                            BluetoothDevice.BOND_BONDING -> Toast.makeText(
+                                context,
+                                "Pairing with $deviceName...",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 }
@@ -291,7 +422,11 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
         val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         } else {
-            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.ACCESS_FINE_LOCATION)
+            arrayOf(
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
         }
         val missingPermissions = requiredPermissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -311,7 +446,11 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
     private fun requestBluetoothEnable() {
         val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
                 requestBluetoothEnableLauncher.launch(enableBtIntent)
             } else {
                 Toast.makeText(this, "BT Connect permission needed", Toast.LENGTH_LONG).show()
@@ -341,19 +480,43 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
         } else {
             listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH)
         }
-        var showRationale = permissionsToExplain.any { ActivityCompat.shouldShowRequestPermissionRationale(this, it) }
+        var showRationale = permissionsToExplain.any {
+            ActivityCompat.shouldShowRequestPermissionRationale(
+                this,
+                it
+            )
+        }
 
         val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(this) // Original dialog
         if (showRationale) {
-            dialogBuilder.setTitle("Permissions Required").setMessage("App needs BT/Location permissions.")
+            dialogBuilder.setTitle("Permissions Required")
+                .setMessage("App needs BT/Location permissions.")
                 .setPositiveButton("Grant") { _, _ -> checkAndRequestBlePermissions() }
-                .setNegativeButton("Deny") { dialog, _ -> dialog.dismiss(); Toast.makeText(this, "Permissions denied.", Toast.LENGTH_LONG).show() }
-        } else {
-            dialogBuilder.setTitle("Permissions Required").setMessage("Enable permissions in App Settings.")
-                .setPositiveButton("Go to Settings") { _, _ ->
-                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                .setNegativeButton("Deny") { dialog, _ ->
+                    dialog.dismiss(); Toast.makeText(
+                    this,
+                    "Permissions denied.",
+                    Toast.LENGTH_LONG
+                ).show()
                 }
-                .setNegativeButton("Cancel") { dialog, _ -> dialog.dismiss(); Toast.makeText(this, "Permissions not granted.", Toast.LENGTH_LONG).show() }
+        } else {
+            dialogBuilder.setTitle("Permissions Required")
+                .setMessage("Enable permissions in App Settings.")
+                .setPositiveButton("Go to Settings") { _, _ ->
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", packageName, null)
+                        )
+                    )
+                }
+                .setNegativeButton("Cancel") { dialog, _ ->
+                    dialog.dismiss(); Toast.makeText(
+                    this,
+                    "Permissions not granted.",
+                    Toast.LENGTH_LONG
+                ).show()
+                }
         }
         dialogBuilder.show()
     }

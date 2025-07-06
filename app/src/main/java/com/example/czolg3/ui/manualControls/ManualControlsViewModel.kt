@@ -1,4 +1,4 @@
-package com.example.czolg3.ui.gallery
+package com.example.czolg3.ui.manualControls
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class GalleryViewModel : ViewModel() {
+class ManualControlsViewModel : ViewModel() {
 
     private val _text = MutableStateFlow("This is gallery Fragment")
     val text: StateFlow<String> = _text.asStateFlow()

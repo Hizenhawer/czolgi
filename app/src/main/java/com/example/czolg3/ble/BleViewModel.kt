@@ -102,6 +102,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                             bleManager.stopScan()
                             targetDevice = event.device
                             _connectionStatus.value = "Device Found, Connecting..." // Changed
+                            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                             bleManager.connect(event.device)
                         } else if (event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
                             addLog("Target ESP32 (${event.deviceName}) found again, already have a target or connected.", Log.DEBUG)
@@ -110,6 +111,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                     is BleEvent.ScanFailed -> {
                         addLog("Scan Failed: ${event.errorCode}", Log.ERROR)
                         _connectionStatus.value = "Scan Failed (${event.errorCode})" // Changed
+                        addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                     }
                     is BleEvent.ConnectionStateChanged -> {
                         addLog("Connection Status: ${event.statusMessage} for ${event.deviceAddress} (GATT: ${event.gattStatusCode}, Profile: ${event.bleProfileState})")
@@ -126,17 +128,6 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is BleEvent.ServicesDiscovered -> {
                         addLog("Services Discovered. Looking for ECHO service...")
-                        _connectionStatus.value = "Services Ready, Initializing..." // Changed
-
-                        val successNotifications = bleManager.enableNotifications(
-                            BleConstants.ECHO_SERVICE_UUID,
-                            BleConstants.ECHO_CHARACTERISTIC_UUID
-                        )
-                        if (successNotifications) {
-                            addLog("Notifications enabling initiated for ECHO characteristic.")
-                        } else {
-                            addLog("Failed to initiate notifications for ECHO characteristic.", Log.WARN)
-                        }
 
                         if (!_isLightsLoopUiActive.value) {
                             toggleLightsLoop()
@@ -145,6 +136,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                     is BleEvent.ServiceDiscoveryFailed -> {
                         addLog("Service Discovery Failed (GATT Status: ${event.gattStatusCode})", Log.ERROR)
                         _connectionStatus.value = "Service Discovery Failed" // Changed
+                        addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                         bleManager.disconnect()
                     }
                     is BleEvent.CharacteristicChanged -> {
@@ -170,6 +162,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                                 addLog("Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}", Log.WARN)
                                 _connectionStatus.value = "Notification Setup Failed" // Changed
                             }
+                            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                         }
                     }
                     else -> {
@@ -180,6 +173,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
             .catch { e ->
                 addLog("Error in BLE event observer: ${e.message}", Log.ERROR)
                 _connectionStatus.value = "Error" // Changed
+                addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                 commandLoopController.stopLightsCommandLoop()
                 _isLightsLoopUiActive.value = false // Changed
             }
@@ -189,6 +183,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     fun startBleScan() {
         addLog("Scan requested from UI.")
         _connectionStatus.value = "Scanning..." // Changed
+        addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
 
         val filters: MutableList<ScanFilter> = ArrayList()
         val settings = ScanSettings.Builder()
@@ -203,6 +198,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         // If not already "Scanning...", don't change status, let ScanFailed handle it if needed
         if (_connectionStatus.value == "Scanning...") {
             _connectionStatus.value = "Scan Stopped" // Or revert to "Disconnected" or previous state
+            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
         }
     }
 
@@ -230,6 +226,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleLightsLoop() {
+        addLog("Toggle lights loop requested.", Log.INFO)
         if (_isLightsLoopUiActive.value) { // Reading StateFlow value
             commandLoopController.stopLightsCommandLoop()
             _isLightsLoopUiActive.value = false // Setting StateFlow value
