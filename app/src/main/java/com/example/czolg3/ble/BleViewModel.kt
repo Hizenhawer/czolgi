@@ -64,7 +64,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun addLog(message: String, level: Int = Log.INFO) {
-        when(level) {
+        when (level) {
             Log.DEBUG -> Log.d(TAG, message)
             Log.INFO -> Log.i(TAG, message)
             Log.WARN -> Log.w(TAG, message)
@@ -96,6 +96,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                     is BleEvent.LogMessage -> {
                         addLog("[BleMgr] ${event.message}", event.level)
                     }
+
                     is BleEvent.ScanResultFound -> {
                         if (targetDevice == null && event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
                             addLog("Target ESP32 found: ${event.deviceName} (${event.device.address}) RSSI: ${event.rssi}")
@@ -105,14 +106,19 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                             addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                             bleManager.connect(event.device)
                         } else if (event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
-                            addLog("Target ESP32 (${event.deviceName}) found again, already have a target or connected.", Log.DEBUG)
+                            addLog(
+                                "Target ESP32 (${event.deviceName}) found again, already have a target or connected.",
+                                Log.DEBUG
+                            )
                         }
                     }
+
                     is BleEvent.ScanFailed -> {
                         addLog("Scan Failed: ${event.errorCode}", Log.ERROR)
                         _connectionStatus.value = "Scan Failed (${event.errorCode})" // Changed
                         addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                     }
+
                     is BleEvent.ConnectionStateChanged -> {
                         addLog("Connection Status: ${event.statusMessage} for ${event.deviceAddress} (GATT: ${event.gattStatusCode}, Profile: ${event.bleProfileState})")
                         _connectionStatus.value = event.statusMessage // Changed
@@ -126,6 +132,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                             identifiedEchoCharacteristic = null
                         }
                     }
+
                     is BleEvent.ServicesDiscovered -> {
                         addLog("Services Discovered. Looking for ECHO service...")
 
@@ -133,12 +140,17 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                             toggleLightsLoop()
                         }
                     }
+
                     is BleEvent.ServiceDiscoveryFailed -> {
-                        addLog("Service Discovery Failed (GATT Status: ${event.gattStatusCode})", Log.ERROR)
+                        addLog(
+                            "Service Discovery Failed (GATT Status: ${event.gattStatusCode})",
+                            Log.ERROR
+                        )
                         _connectionStatus.value = "Service Discovery Failed" // Changed
                         addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                         bleManager.disconnect()
                     }
+
                     is BleEvent.CharacteristicChanged -> {
                         if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
                             val value = event.value.decodeToString()
@@ -146,25 +158,34 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                             _receivedData.value = value // Changed
                         }
                     }
+
                     is BleEvent.CharacteristicWritten -> {
                         if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
                             if (event.gattStatusCode != BluetoothGatt.GATT_SUCCESS) {
-                                addLog("Write to ECHO characteristic failed. Status: ${event.gattStatusCode}", Log.WARN)
+                                addLog(
+                                    "Write to ECHO characteristic failed. Status: ${event.gattStatusCode}",
+                                    Log.WARN
+                                )
                             }
                         }
                     }
+
                     is BleEvent.DescriptorWritten -> {
                         if (event.descriptorUuid == BleConstants.CCCD_UUID) {
                             if (event.gattStatusCode == BluetoothGatt.GATT_SUCCESS) {
                                 addLog("Notification descriptor for ECHO written successfully.")
                                 _connectionStatus.value = "Ready" // Changed
                             } else {
-                                addLog("Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}", Log.WARN)
+                                addLog(
+                                    "Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}",
+                                    Log.WARN
+                                )
                                 _connectionStatus.value = "Notification Setup Failed" // Changed
                             }
                             addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
                         }
                     }
+
                     else -> {
                         // addLog("Unhandled BleEvent: $event", Log.DEBUG)
                     }
@@ -197,7 +218,8 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         bleManager.stopScan()
         // If not already "Scanning...", don't change status, let ScanFailed handle it if needed
         if (_connectionStatus.value == "Scanning...") {
-            _connectionStatus.value = "Scan Stopped" // Or revert to "Disconnected" or previous state
+            _connectionStatus.value =
+                "Scan Stopped" // Or revert to "Disconnected" or previous state
             addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
         }
     }
@@ -221,7 +243,10 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                 addLog("Failed to initiate custom command send.", Log.WARN)
             }
         } else {
-            addLog("Cannot send custom command: Not connected or ready. Status: ${_connectionStatus.value}", Log.WARN)
+            addLog(
+                "Cannot send custom command: Not connected or ready. Status: ${_connectionStatus.value}",
+                Log.WARN
+            )
         }
     }
 
@@ -235,9 +260,47 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                 commandLoopController.startLightsCommandLoop()
                 _isLightsLoopUiActive.value = true // Setting StateFlow value
             } else {
-                addLog("Cannot start lights loop: Device not connected or ready. Status: ${_connectionStatus.value}", Log.WARN)
+                addLog(
+                    "Cannot start lights loop: Device not connected or ready. Status: ${_connectionStatus.value}",
+                    Log.WARN
+                )
             }
         }
+    }
+
+    private val gearToSpeedMap = mapOf(
+        0 to 0,   // Stop
+        1 to 80,  // Slow Forward
+        2 to 125, // Medium Forward
+        3 to 255, // Fast Forward
+        -1 to -80, // Slow Reverse
+        -2 to -125,// Medium Reverse
+        -3 to -255 // Fast Reverse
+    )
+
+    fun sendGearSelectedCommand(leftTrackSelectedGear: Int, rightTrackSelectedGear: Int) {
+        val leftTrackSpeedValue = gearToSpeedMap[leftTrackSelectedGear] ?: 0 // Default to 0 if gear not in map
+        val rightTrackSpeedValue = gearToSpeedMap[rightTrackSelectedGear] ?: 0
+
+        addLog(
+            "Sending gear selected command. Left Gear: $leftTrackSelectedGear -> Speed Value: $leftTrackSpeedValue, Right Gear: $rightTrackSelectedGear -> Speed Value: $rightTrackSpeedValue",
+            Log.INFO
+        )
+
+        val commandString = "TRACKS:$leftTrackSpeedValue:$rightTrackSpeedValue"
+        addLog("Command to send: $commandString", Log.DEBUG)
+
+        val success = bleManager.writeCharacteristic(
+            BleConstants.ECHO_SERVICE_UUID,
+            BleConstants.ECHO_CHARACTERISTIC_UUID,
+            commandString.toByteArray(Charsets.UTF_8)
+        )
+        if (!success) {
+            addLog("Failed to send gear selected command.", Log.WARN)
+        } else {
+            addLog("Gear selected command sent.", Log.INFO)
+        }
+
     }
 
     override fun onCleared() {
@@ -247,6 +310,6 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         bleManager.cleanup()
         viewModelScope.coroutineContext.cancelChildren()
         viewModelUIScope.coroutineContext.cancelChildren()
-        Log.i(TAG, "BleViewModel onCleared finished.")
+        addLog("BleViewModel onCleared finished.", Log.DEBUG)
     }
 }

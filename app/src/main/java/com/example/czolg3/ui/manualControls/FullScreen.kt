@@ -26,9 +26,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,6 +49,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.czolg3.ble.BleViewModel
 import kotlinx.coroutines.coroutineScope
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -58,17 +62,29 @@ const val MAX_GEAR = 3
 const val TAG = "FullScreen"
 
 @Composable
-fun FullScreen( /* navController: NavHostController if needed for back navigation */) {
+fun FullScreen(bleViewModel: BleViewModel) {
     val context = LocalContext.current
     val activity = context as? Activity
+
+    var initialCompositionDone by remember { mutableStateOf(false) }
 
     var leftTrackVisualGear by remember { mutableFloatStateOf(0f) } // For smooth visual update
     var rightTrackVisualGear by remember { mutableFloatStateOf(0f) } // For smooth visual update
 
-    // You might want to also store the actual selected integer gear if needed elsewhere directly
-    // var leftTrackSelectedGear by remember { mutableIntStateOf(0) }
-    // var rightTrackSelectedGear by remember { mutableIntStateOf(0) }
+    var leftTrackSelectedGear by remember { mutableIntStateOf(0) }
+    var rightTrackSelectedGear by remember { mutableIntStateOf(0) }
 
+    fun onGearSelected() {
+        Log.d(TAG, "Sending gear selected command: $leftTrackSelectedGear, $rightTrackSelectedGear")
+        bleViewModel.sendGearSelectedCommand(leftTrackSelectedGear, rightTrackSelectedGear)
+    }
+    LaunchedEffect(leftTrackSelectedGear, rightTrackSelectedGear) {
+        if (initialCompositionDone) {
+            onGearSelected()
+        } else {
+            initialCompositionDone = true
+        }
+    }
 
     DisposableEffect(Unit) {
         val originalOrientation = activity?.requestedOrientation
@@ -85,6 +101,7 @@ fun FullScreen( /* navController: NavHostController if needed for back navigatio
             .background(Color.DarkGray),
         contentAlignment = Alignment.Center
     ) {
+
         Row(
             modifier = Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -97,8 +114,7 @@ fun FullScreen( /* navController: NavHostController if needed for back navigatio
                 },
                 onGearSelected = { selectedIntGear -> // Called when an integer gear is confirmed
                     Log.d(TAG, "Left Slider Selected Gear: $selectedIntGear")
-                    // Here you would send your Bluetooth command with selectedIntGear
-                    // leftTrackSelectedGear = selectedIntGear // Optionally update a state here
+                    leftTrackSelectedGear = selectedIntGear
                 },
                 modifier = Modifier
                     .fillMaxHeight(0.8f)
@@ -134,8 +150,7 @@ fun FullScreen( /* navController: NavHostController if needed for back navigatio
                 },
                 onGearSelected = { selectedIntGear ->
                     Log.d(TAG, "Right Slider Selected Gear: $selectedIntGear")
-                    // Here you would send your Bluetooth command with selectedIntGear
-                    // rightTrackSelectedGear = selectedIntGear // Optionally update a state here
+                    rightTrackSelectedGear = selectedIntGear
                 },
                 labelsOnLeft = true,
                 modifier = Modifier
@@ -197,7 +212,8 @@ fun TankTrackSlider(
 
                             val dragStartY = down.position.y
                             val visualGearAtDragStart = currentVisualGear
-                            var currentDragRoundedGear = currentVisualGear.roundToInt() // Track rounded gear for this drag
+                            var currentDragRoundedGear =
+                                currentVisualGear.roundToInt() // Track rounded gear for this drag
 
                             // Initialize lastReportedGear based on the state when the drag starts,
                             // if it hasn't been set or to ensure it's current.
@@ -224,12 +240,14 @@ fun TankTrackSlider(
                                         onGearSelected(newRoundedGear)
                                         lastReportedGear = newRoundedGear
                                     }
-                                    currentDragRoundedGear = newRoundedGear // Update for current drag
+                                    currentDragRoundedGear =
+                                        newRoundedGear // Update for current drag
                                 }
                             }
 
                             // Drag has ended, now apply snapping
-                            val finalVisualGearAfterDrag = currentVisualGear // Get the latest visual gear
+                            val finalVisualGearAfterDrag =
+                                currentVisualGear // Get the latest visual gear
                             val roundedFinalVisualGear = finalVisualGearAfterDrag.roundToInt()
                             val snappedVisualGear = when {
                                 abs(finalVisualGearAfterDrag) <= snapThreshold -> 0f
@@ -270,9 +288,15 @@ fun TankTrackSlider(
             val currentThumbActualY =
                 thumbYPosition.coerceIn(thumbRadius, size.height - thumbRadius)
             val activeStartOffset =
-                Offset(lineCenterY, if (currentVisualGear >= 0) zeroYPosition else currentThumbActualY)
+                Offset(
+                    lineCenterY,
+                    if (currentVisualGear >= 0) zeroYPosition else currentThumbActualY
+                )
             val activeEndOffset =
-                Offset(lineCenterY, if (currentVisualGear >= 0) currentThumbActualY else zeroYPosition)
+                Offset(
+                    lineCenterY,
+                    if (currentVisualGear >= 0) currentThumbActualY else zeroYPosition
+                )
 
             if (currentVisualGear != 0f) {
                 drawLine(
@@ -338,6 +362,6 @@ fun TankTrackSlider(
 @Composable
 fun FullscreenWithSlidersPreview() {
     MaterialTheme {
-        FullScreen()
+        FullScreen(viewModel())
     }
 }

@@ -191,7 +191,7 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
             route = AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE // Route to this sub-graph
         ) {
             composable(AppDestinations.MANUAL_CONTROLS_FULL_SCREEN_ROUTE) {
-                FullScreen() // Pass the same top-level controller
+                FullScreen(bleViewModel = bleViewModel) // Pass the same top-level controller
             }
             // Add other fullscreen destinations here if you have more
             // Example:
