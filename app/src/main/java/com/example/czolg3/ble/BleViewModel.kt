@@ -21,8 +21,23 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
-class BleViewModel(application: Application) : AndroidViewModel(application) {
+interface IBleViewModel {
+    val connectionStatus: StateFlow<String>
+    val receivedData: StateFlow<String>
+    val operationLog: StateFlow<StringBuilder>
+    val isLightsLoopUiActive: StateFlow<Boolean>
+    fun startBleScan()
+    fun stopBleScan()
+    fun disconnectDevice()
+    fun sendCustomCommand(command: String)
+    fun toggleLightsLoop()
+    fun sendGearSelectedCommand(leftGear: Int, rightGear: Int)
+    fun sendTurretAngleSelectedCommand(angle: Int)
+}
+
+class BleViewModel(application: Application) : AndroidViewModel(application), IBleViewModel {
     private val TAG = "BleViewModel"
 
     private val bleManager = BleManager(application)
@@ -31,17 +46,17 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     private val viewModelUIScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _connectionStatus = MutableStateFlow("Disconnected")
-    val connectionStatus: StateFlow<String> = _connectionStatus.asStateFlow()
+    override val connectionStatus: StateFlow<String> = _connectionStatus.asStateFlow()
 
     // Consider converting these to StateFlow as well for consistency
     private val _receivedData = MutableStateFlow("") // Changed from MutableLiveData
-    val receivedData: StateFlow<String> = _receivedData.asStateFlow() // Changed from LiveData
+    override val receivedData: StateFlow<String> = _receivedData.asStateFlow() // Changed from LiveData
 
     private val _operationLog = MutableStateFlow(StringBuilder("Logs:\n")) // Changed
-    val operationLog: StateFlow<StringBuilder> = _operationLog.asStateFlow() // Changed
+    override val operationLog: StateFlow<StringBuilder> = _operationLog.asStateFlow() // Changed
 
     private val _isLightsLoopUiActive = MutableStateFlow(false) // Changed
-    val isLightsLoopUiActive: StateFlow<Boolean> = _isLightsLoopUiActive.asStateFlow() // Changed
+    override val isLightsLoopUiActive: StateFlow<Boolean> = _isLightsLoopUiActive.asStateFlow() // Changed
 
 
     private var targetDevice: BluetoothDevice? = null
@@ -201,7 +216,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
             .launchIn(viewModelScope)
     }
 
-    fun startBleScan() {
+    override fun startBleScan() {
         addLog("Scan requested from UI.")
         _connectionStatus.value = "Scanning..." // Changed
         addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
@@ -213,7 +228,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         bleManager.startScan(if (filters.isEmpty()) null else filters, settings)
     }
 
-    fun stopBleScan() {
+    override fun stopBleScan() {
         addLog("Stop scan requested from UI.")
         bleManager.stopScan()
         // If not already "Scanning...", don't change status, let ScanFailed handle it if needed
@@ -224,14 +239,14 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun disconnectDevice() {
+    override fun disconnectDevice() {
         addLog("Disconnect requested from UI.")
         commandLoopController.stopLightsCommandLoop()
         _isLightsLoopUiActive.value = false // Changed
         bleManager.disconnect()
     }
 
-    fun sendCustomCommand(command: String) {
+    override fun sendCustomCommand(command: String) {
         if (_connectionStatus.value == "Ready" || _connectionStatus.value == "Connected") {
             addLog("Sending custom command: $command")
             val success = bleManager.writeCharacteristic(
@@ -250,7 +265,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun toggleLightsLoop() {
+    override fun toggleLightsLoop() {
         addLog("Toggle lights loop requested.", Log.INFO)
         if (_isLightsLoopUiActive.value) { // Reading StateFlow value
             commandLoopController.stopLightsCommandLoop()
@@ -278,29 +293,42 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         -3 to -255 // Fast Reverse
     )
 
-    fun sendGearSelectedCommand(leftTrackSelectedGear: Int, rightTrackSelectedGear: Int) {
-        val leftTrackSpeedValue = gearToSpeedMap[leftTrackSelectedGear] ?: 0 // Default to 0 if gear not in map
-        val rightTrackSpeedValue = gearToSpeedMap[rightTrackSelectedGear] ?: 0
+    override fun sendGearSelectedCommand(leftGear: Int, rightGear: Int) {
+        val leftTrackSpeedValue = gearToSpeedMap[leftGear] ?: 0 // Default to 0 if gear not in map
+        val rightTrackSpeedValue = gearToSpeedMap[rightGear] ?: 0
 
         addLog(
-            "Sending gear selected command. Left Gear: $leftTrackSelectedGear -> Speed Value: $leftTrackSpeedValue, Right Gear: $rightTrackSelectedGear -> Speed Value: $rightTrackSpeedValue",
+            "Sending gear selected command. Left Gear: $leftGear -> Speed Value: $leftTrackSpeedValue, Right Gear: $rightGear -> Speed Value: $rightTrackSpeedValue",
             Log.INFO
         )
 
         val commandString = "TRACKS:$leftTrackSpeedValue:$rightTrackSpeedValue"
         addLog("Command to send: $commandString", Log.DEBUG)
 
+        sendCommand(commandString)
+    }
+
+    override fun sendTurretAngleSelectedCommand(angle: Int) {
+        val speed = gearToSpeedMap[abs(angle)] ?: 0
+        val direction = if (angle > 0) 'e' else 'q'
+        val commandString = "TURRET:$direction:$speed"
+        addLog("Command to send: $commandString", Log.DEBUG)
+
+        sendCommand(commandString)
+    }
+
+    private fun sendCommand(command: String) {
         val success = bleManager.writeCharacteristic(
             BleConstants.ECHO_SERVICE_UUID,
             BleConstants.ECHO_CHARACTERISTIC_UUID,
-            commandString.toByteArray(Charsets.UTF_8)
+            command.toByteArray(Charsets.UTF_8)
         )
         if (!success) {
-            addLog("Failed to send gear selected command.", Log.WARN)
+            addLog("Failed to send $command.", Log.WARN)
         } else {
-            addLog("Gear selected command sent.", Log.INFO)
+            addLog("$command sent.", Log.INFO)
         }
-
+        TODO("Add queue")
     }
 
     override fun onCleared() {
