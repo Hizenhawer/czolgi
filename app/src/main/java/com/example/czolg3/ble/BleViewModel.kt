@@ -328,7 +328,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
         } else {
             addLog("$command sent.", Log.INFO)
         }
-        TODO("Add queue")
+//        TODO("Add queue")
     }
 
     override fun onCleared() {

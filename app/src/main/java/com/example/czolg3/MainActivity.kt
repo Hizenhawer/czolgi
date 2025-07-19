@@ -61,8 +61,6 @@ import com.example.czolg3.ble.BleViewModel
 import com.example.czolg3.ui.home.HomeScreen
 import com.example.czolg3.ui.home.HomeViewModel
 import com.example.czolg3.ui.manualControls.FullScreen
-import com.example.czolg3.ui.manualControls.ManualControlsScreen
-import com.example.czolg3.ui.manualControls.ManualControlsViewModel
 import com.example.czolg3.ui.slideshow.SlideshowScreen
 import com.example.czolg3.ui.slideshow.SlideshowViewModel
 import kotlinx.coroutines.launch
@@ -74,7 +72,6 @@ object AppDestinations {
     const val SLIDESHOW_ROUTE = "slideshow"
 
     const val MANUAL_CONTROLS_GRAPH_ROUTE = "manualControlsGraph"
-    const val MANUAL_CONTROLS_ROUTE = "manualControls"
     const val MANUAL_CONTROLS_FULL_SCREEN_ROUTE = "MCFullScreen"
 }
 
@@ -244,12 +241,19 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                     NavigationDrawerItem(
                         icon = { Icon(Icons.Filled.Games, contentDescription = "Manual Controls") },
                         label = { Text("Manual Controls") }, // This leads to the non-fullscreen version
-                        selected = currentScaffoldRoute == AppDestinations.MANUAL_CONTROLS_ROUTE,
+                        selected = false,
                         onClick = {
-                            scaffoldContentNavController.navigate(AppDestinations.MANUAL_CONTROLS_ROUTE) {
-                                popUpTo(scaffoldContentNavController.graph.startDestinationId) { saveState = true }
+                            mainNavController.navigate(AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE) {
                                 launchSingleTop = true
-                                restoreState = true
+                                restoreState = true // If you popped and saved state, restore it if navigating again
+                            }
+
+                            scaffoldContentNavController.navigate(AppDestinations.HOME_ROUTE) {
+                                popUpTo(scaffoldContentNavController.graph.startDestinationId) {
+                                    inclusive = true // Clear the whole back stack of the scaffolded content
+                                }
+                                launchSingleTop = true
+                                // No saveState/restoreState needed here usually if you're just resetting.
                             }
                             scope.launch { drawerState.close() }
                         }
@@ -315,17 +319,6 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                     // Pass scaffoldNavController if HomeScreen needs to navigate to other scaffolded screens
                 )
             }
-            composable(AppDestinations.MANUAL_CONTROLS_ROUTE) { // The non-fullscreen one
-                val manualControlsViewModel: ManualControlsViewModel = viewModel()
-                ManualControlsScreen(
-                    manualControlsViewModel = manualControlsViewModel,
-                    onNavigateToFullScreen = {
-                        // Use the MAIN NavController to switch to the fullscreen GRAPH
-                        mainNavController.navigate(AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE)
-                    }
-                    // Pass scaffoldNavController if it needs to navigate to other scaffolded screens
-                )
-            }
             composable(AppDestinations.SLIDESHOW_ROUTE) {
                 val slideshowViewModel: SlideshowViewModel = viewModel()
                 SlideshowScreen(
@@ -342,7 +335,7 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
     private fun determineTitle(route: String?): String {
         return when (route) {
             AppDestinations.HOME_ROUTE -> "Home"
-            AppDestinations.MANUAL_CONTROLS_ROUTE -> "Manual Controls"
+            AppDestinations.MANUAL_CONTROLS_FULL_SCREEN_ROUTE -> "Manual Controls"
             AppDestinations.SLIDESHOW_ROUTE -> "Slideshow"
             else -> "Czolg3"
         }
