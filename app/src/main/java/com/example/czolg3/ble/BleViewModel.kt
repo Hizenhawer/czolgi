@@ -12,8 +12,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,31 +52,35 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
 
     // Consider converting these to StateFlow as well for consistency
     private val _receivedData = MutableStateFlow("") // Changed from MutableLiveData
-    override val receivedData: StateFlow<String> = _receivedData.asStateFlow() // Changed from LiveData
+    override val receivedData: StateFlow<String> =
+        _receivedData.asStateFlow() // Changed from LiveData
 
     private val _operationLog = MutableStateFlow(StringBuilder("Logs:\n")) // Changed
     override val operationLog: StateFlow<StringBuilder> = _operationLog.asStateFlow() // Changed
 
     private val _isLightsLoopUiActive = MutableStateFlow(false) // Changed
-    override val isLightsLoopUiActive: StateFlow<Boolean> = _isLightsLoopUiActive.asStateFlow() // Changed
+    override val isLightsLoopUiActive: StateFlow<Boolean> =
+        _isLightsLoopUiActive.asStateFlow() // Changed
 
+    private var latestCommandToSend: String? =
+        null // Holds the command if the last send attempt failed
+    private var retryJob: Job? = null
+    private val MAX_RETRY_ATTEMPTS = 3
+    private val RETRY_DELAY_MS = 250L
 
     private var targetDevice: BluetoothDevice? = null
     private var identifiedEchoCharacteristic: BluetoothGattCharacteristic? = null
 
     init {
-        commandLoopController = CommandLoopController(
-            scope = viewModelScope,
-            commandSender = { command ->
+        commandLoopController =
+            CommandLoopController(scope = viewModelScope, commandSender = { command ->
                 val success = bleManager.writeCharacteristic(
                     BleConstants.ECHO_SERVICE_UUID,
                     BleConstants.ECHO_CHARACTERISTIC_UUID,
                     command.toByteArray(Charsets.UTF_8)
                 )
                 success
-            },
-            logUpdater = { message -> addLog("[LoopCtrl] $message") }
-        )
+            }, logUpdater = { message -> addLog("[LoopCtrl] $message") })
         observeBleEvents()
     }
 
@@ -105,115 +111,112 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
     }
 
     private fun observeBleEvents() {
-        bleManager.bleEvents
-            .onEach { event ->
-                when (event) {
-                    is BleEvent.LogMessage -> {
-                        addLog("[BleMgr] ${event.message}", event.level)
-                    }
+        bleManager.bleEvents.onEach { event ->
+            when (event) {
+                is BleEvent.LogMessage -> {
+                    addLog("[BleMgr] ${event.message}", event.level)
+                }
 
-                    is BleEvent.ScanResultFound -> {
-                        if (targetDevice == null && event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
-                            addLog("Target ESP32 found: ${event.deviceName} (${event.device.address}) RSSI: ${event.rssi}")
-                            bleManager.stopScan()
-                            targetDevice = event.device
-                            _connectionStatus.value = "Device Found, Connecting..." // Changed
-                            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
-                            bleManager.connect(event.device)
-                        } else if (event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
+                is BleEvent.ScanResultFound -> {
+                    if (targetDevice == null && event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
+                        addLog("Target ESP32 found: ${event.deviceName} (${event.device.address}) RSSI: ${event.rssi}")
+                        bleManager.stopScan()
+                        targetDevice = event.device
+                        _connectionStatus.value = "Device Found, Connecting..." // Changed
+                        addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
+                        bleManager.connect(event.device)
+                    } else if (event.deviceName == BleConstants.ESP32_DEVICE_NAME) {
+                        addLog(
+                            "Target ESP32 (${event.deviceName}) found again, already have a target or connected.",
+                            Log.DEBUG
+                        )
+                    }
+                }
+
+                is BleEvent.ScanFailed -> {
+                    addLog("Scan Failed: ${event.errorCode}", Log.ERROR)
+                    _connectionStatus.value = "Scan Failed (${event.errorCode})" // Changed
+                    addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
+                }
+
+                is BleEvent.ConnectionStateChanged -> {
+                    addLog("Connection Status: ${event.statusMessage} for ${event.deviceAddress} (GATT: ${event.gattStatusCode}, Profile: ${event.bleProfileState})")
+                    _connectionStatus.value = event.statusMessage // Changed
+
+                    if (event.statusMessage != "Connected" && event.statusMessage != "Ready") { // Adjusted condition slightly
+                        if (_isLightsLoopUiActive.value) { // Check if loop was active
+                            commandLoopController.stopLightsCommandLoop()
+                            _isLightsLoopUiActive.value = false // Changed
+                        }
+                        targetDevice = null
+                        identifiedEchoCharacteristic = null
+                    }
+                }
+
+                is BleEvent.ServicesDiscovered -> {
+                    addLog("Services Discovered. Looking for ECHO service...")
+
+                    if (!_isLightsLoopUiActive.value) {
+                        toggleLightsLoop()
+                    }
+                }
+
+                is BleEvent.ServiceDiscoveryFailed -> {
+                    addLog(
+                        "Service Discovery Failed (GATT Status: ${event.gattStatusCode})",
+                        Log.ERROR
+                    )
+                    _connectionStatus.value = "Service Discovery Failed" // Changed
+                    addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
+                    bleManager.disconnect()
+                }
+
+                is BleEvent.CharacteristicChanged -> {
+                    if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
+                        val value = event.value.decodeToString()
+                        addLog("Data received from ESP32 (Echo): $value")
+                        _receivedData.value = value // Changed
+                    }
+                }
+
+                is BleEvent.CharacteristicWritten -> {
+                    if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
+                        if (event.gattStatusCode != BluetoothGatt.GATT_SUCCESS) {
                             addLog(
-                                "Target ESP32 (${event.deviceName}) found again, already have a target or connected.",
-                                Log.DEBUG
+                                "Write to ECHO characteristic failed. Status: ${event.gattStatusCode}",
+                                Log.WARN
                             )
                         }
                     }
+                }
 
-                    is BleEvent.ScanFailed -> {
-                        addLog("Scan Failed: ${event.errorCode}", Log.ERROR)
-                        _connectionStatus.value = "Scan Failed (${event.errorCode})" // Changed
+                is BleEvent.DescriptorWritten -> {
+                    if (event.descriptorUuid == BleConstants.CCCD_UUID) {
+                        if (event.gattStatusCode == BluetoothGatt.GATT_SUCCESS) {
+                            addLog("Notification descriptor for ECHO written successfully.")
+                            _connectionStatus.value = "Ready" // Changed
+                        } else {
+                            addLog(
+                                "Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}",
+                                Log.WARN
+                            )
+                            _connectionStatus.value = "Notification Setup Failed" // Changed
+                        }
                         addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
-                    }
-
-                    is BleEvent.ConnectionStateChanged -> {
-                        addLog("Connection Status: ${event.statusMessage} for ${event.deviceAddress} (GATT: ${event.gattStatusCode}, Profile: ${event.bleProfileState})")
-                        _connectionStatus.value = event.statusMessage // Changed
-
-                        if (event.statusMessage != "Connected" && event.statusMessage != "Ready") { // Adjusted condition slightly
-                            if (_isLightsLoopUiActive.value) { // Check if loop was active
-                                commandLoopController.stopLightsCommandLoop()
-                                _isLightsLoopUiActive.value = false // Changed
-                            }
-                            targetDevice = null
-                            identifiedEchoCharacteristic = null
-                        }
-                    }
-
-                    is BleEvent.ServicesDiscovered -> {
-                        addLog("Services Discovered. Looking for ECHO service...")
-
-                        if (!_isLightsLoopUiActive.value) {
-                            toggleLightsLoop()
-                        }
-                    }
-
-                    is BleEvent.ServiceDiscoveryFailed -> {
-                        addLog(
-                            "Service Discovery Failed (GATT Status: ${event.gattStatusCode})",
-                            Log.ERROR
-                        )
-                        _connectionStatus.value = "Service Discovery Failed" // Changed
-                        addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
-                        bleManager.disconnect()
-                    }
-
-                    is BleEvent.CharacteristicChanged -> {
-                        if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
-                            val value = event.value.decodeToString()
-                            addLog("Data received from ESP32 (Echo): $value")
-                            _receivedData.value = value // Changed
-                        }
-                    }
-
-                    is BleEvent.CharacteristicWritten -> {
-                        if (event.characteristicUuid == BleConstants.ECHO_CHARACTERISTIC_UUID) {
-                            if (event.gattStatusCode != BluetoothGatt.GATT_SUCCESS) {
-                                addLog(
-                                    "Write to ECHO characteristic failed. Status: ${event.gattStatusCode}",
-                                    Log.WARN
-                                )
-                            }
-                        }
-                    }
-
-                    is BleEvent.DescriptorWritten -> {
-                        if (event.descriptorUuid == BleConstants.CCCD_UUID) {
-                            if (event.gattStatusCode == BluetoothGatt.GATT_SUCCESS) {
-                                addLog("Notification descriptor for ECHO written successfully.")
-                                _connectionStatus.value = "Ready" // Changed
-                            } else {
-                                addLog(
-                                    "Failed to write notification descriptor for ECHO. Status: ${event.gattStatusCode}",
-                                    Log.WARN
-                                )
-                                _connectionStatus.value = "Notification Setup Failed" // Changed
-                            }
-                            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
-                        }
-                    }
-
-                    else -> {
-                        // addLog("Unhandled BleEvent: $event", Log.DEBUG)
                     }
                 }
+
+                else -> {
+                    // addLog("Unhandled BleEvent: $event", Log.DEBUG)
+                }
             }
-            .catch { e ->
-                addLog("Error in BLE event observer: ${e.message}", Log.ERROR)
-                _connectionStatus.value = "Error" // Changed
-                addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
-                commandLoopController.stopLightsCommandLoop()
-                _isLightsLoopUiActive.value = false // Changed
-            }
-            .launchIn(viewModelScope)
+        }.catch { e ->
+            addLog("Error in BLE event observer: ${e.message}", Log.ERROR)
+            _connectionStatus.value = "Error" // Changed
+            addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
+            commandLoopController.stopLightsCommandLoop()
+            _isLightsLoopUiActive.value = false // Changed
+        }.launchIn(viewModelScope)
     }
 
     override fun startBleScan() {
@@ -222,9 +225,8 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
         addLog("Connection Status: ${_connectionStatus.value}", Log.DEBUG)
 
         val filters: MutableList<ScanFilter> = ArrayList()
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+        val settings =
+            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         bleManager.startScan(if (filters.isEmpty()) null else filters, settings)
     }
 
@@ -317,18 +319,55 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
         sendCommand(commandString)
     }
 
-    private fun sendCommand(command: String) {
+    private fun sendCommand(command: String, attempt: Int = 1) {
+        addLog("Attempting to send command: '$command' (Attempt: $attempt)", Log.DEBUG)
+
+        if (_connectionStatus.value != "Ready" && _connectionStatus.value != "Connected") {
+            addLog(
+                "Cannot send command '$command': Not connected or ready. Status: ${_connectionStatus.value}",
+                Log.WARN
+            )
+            latestCommandToSend = command // Save it, maybe connection will be restored
+            return
+        }
+
         val success = bleManager.writeCharacteristic(
             BleConstants.ECHO_SERVICE_UUID,
             BleConstants.ECHO_CHARACTERISTIC_UUID,
             command.toByteArray(Charsets.UTF_8)
         )
-        if (!success) {
-            addLog("Failed to send $command.", Log.WARN)
+
+        if (success) {
+            addLog("Command '$command' successfully send.", Log.INFO)
+            latestCommandToSend = null // Clear any pending command as this one was initiated
+            retryJob?.cancel() // Cancel any ongoing retry job for a previous command
+            retryJob = null
+
+            // If there was a previously failed command that we are now retrying
+            // and this success was for that, we don't need to do anything extra here.
+            // The queue/latest logic should be in BleManager.
         } else {
-            addLog("$command sent.", Log.INFO)
+            addLog("Failed to send command '$command'. (Attempt: $attempt)", Log.WARN)
+            latestCommandToSend = command // Store/update the command that needs sending
+
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                retryJob?.cancel() // Cancel previous retry job if any
+                retryJob = viewModelScope.launch {
+                    addLog("Scheduling retry for '$command' in $RETRY_DELAY_MS ms", Log.INFO)
+                    delay(RETRY_DELAY_MS)
+                    if (latestCommandToSend == command) { // Check if it's still the command we need to send
+                        sendCommand(command, attempt + 1)
+                    } else if (latestCommandToSend != null) { // A newer command came in
+                        sendCommand(latestCommandToSend!!, 1) // Retry the newest one
+                    } else {
+                        addLog("No command to retry.", Log.INFO)
+                    }
+                }
+            } else {
+                addLog("Max retry attempts reached for command '$command'. Giving up.", Log.ERROR)
+                // Optionally, inform the user or take other actions
+            }
         }
-//        TODO("Add queue")
     }
 
     override fun onCleared() {
