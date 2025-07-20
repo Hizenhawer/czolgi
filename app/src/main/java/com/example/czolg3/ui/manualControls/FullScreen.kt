@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,6 +64,7 @@ fun FullScreen(bleViewModel: IBleViewModel) {
         Log.d(TAG, "Sending gear selected command: $leftTrackSelectedGear, $rightTrackSelectedGear")
         bleViewModel.sendGearSelectedCommand(leftTrackSelectedGear, rightTrackSelectedGear)
     }
+
     LaunchedEffect(leftTrackSelectedGear, rightTrackSelectedGear) {
         if (initialCompositionDone) {
             onGearSelected()
@@ -90,14 +92,17 @@ fun FullScreen(bleViewModel: IBleViewModel) {
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.CenterStart
+            // Top Row: Turret Slider and potentially other controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp, start = 24.dp, end = 24.dp), // Added end padding
+                verticalAlignment = Alignment.CenterVertically,
+                // horizontalArrangement = Arrangement.SpaceBetween // If you add more controls here
             ) {
                 TurretControlSlider(
                     modifier = Modifier
-                        .width(200.dp)
-                        .padding(top = 24.dp, start = 24.dp),
+                        .width(200.dp),
                     currentAngleDegrees = turretAngleDegrees,
                     onAngleChange = { newAngle ->
                         turretAngleDegrees = newAngle
@@ -107,55 +112,83 @@ fun FullScreen(bleViewModel: IBleViewModel) {
                     maxAngleDegrees = 3f,
                     indicatorMarkingsColor = Color.White,
                 )
+                Spacer(modifier = Modifier.weight(1f)) // Pushes buttons to the right or center
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        Log.d(TAG, "Turret Lights Button Clicked")
+                        bleViewModel.sendCommand("LIGHTS:TURRET:TOGGLE")
+                    }) {
+                        Text("T-Lights")
+                    }
+                    Button(onClick = {
+                        Log.d(TAG, "Hull Lights Button Clicked")
+                        bleViewModel.sendCommand("LIGHTS:HULL:TOGGLE")
+                    }) {
+                        Text("H-Lights")
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.weight(0.1f)) // Pushes tank tracks down a bit
+
+            Spacer(modifier = Modifier.weight(0.1f)) // Pushes tank tracks and center text down
 
             Row(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize(), // This Row takes the rest of the space
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TankTrackSlider(
                     currentVisualGear = leftTrackVisualGear,
-                    onVisualGearChange = { newVisualGear -> // For updating the slider's display smoothly
+                    onVisualGearChange = { newVisualGear ->
                         leftTrackVisualGear = newVisualGear
                     },
-                    onGearSelected = { selectedIntGear -> // Called when an integer gear is confirmed
+                    onGearSelected = { selectedIntGear ->
                         Log.d(TAG, "Left Slider Selected Gear: $selectedIntGear")
                         leftTrackSelectedGear = selectedIntGear
                     },
                     modifier = Modifier
-                        .fillMaxHeight(0.8f)
+                        .fillMaxHeight(0.8f) // Adjusted height to make space for top row
                         .width(80.dp)
-                        .padding(start = 24.dp, end = 16.dp)
+                        .padding(start = 24.dp, end = 16.dp, bottom = 16.dp) // Added bottom padding
                 )
 
-                Box( // Center Text Display (Gear Values)
+                // Center Column: Buttons and Text Display
+                Column(
                     modifier = Modifier
                         .weight(1f) // Takes available space between sliders
-                        .fillMaxHeight(),
-                    contentAlignment = Alignment.Center
+                        .fillMaxHeight()
+                        .padding(bottom = 16.dp), // Added bottom padding
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center // Center the content vertically
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "L: ${leftTrackVisualGear.roundToInt()}",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "R: ${rightTrackVisualGear.roundToInt()}",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(24.dp)) // Space above turret angle
-                        Text(
-                            "Turret: ${turretAngleDegrees.roundToInt()}°",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White
-                        )
+                    Button(
+                        onClick = {
+                            Log.d(TAG, "Switch Mode Button Clicked")
+                            TODO()
+                        },
+                        modifier = Modifier.padding(bottom = 24.dp) // Space below this button
+                    ) {
+                        Text("Switch Mode")
                     }
+
+                    Text(
+                        "L: ${leftTrackVisualGear.roundToInt()}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "R: ${rightTrackVisualGear.roundToInt()}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        "Turret: ${turretAngleDegrees.roundToInt()}°",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White
+                    )
                 }
 
                 TankTrackSlider(
@@ -169,9 +202,9 @@ fun FullScreen(bleViewModel: IBleViewModel) {
                     },
                     labelsOnLeft = true,
                     modifier = Modifier
-                        .fillMaxHeight(0.8f)
+                        .fillMaxHeight(0.8f) // Adjusted height
                         .width(80.dp)
-                        .padding(start = 16.dp, end = 24.dp)
+                        .padding(start = 16.dp, end = 24.dp, bottom = 16.dp) // Added bottom padding
                 )
             }
         }
@@ -185,3 +218,4 @@ fun FullscreenWithSlidersPreview() {
         FullScreen(FakeBleViewModel())
     }
 }
+

@@ -33,10 +33,10 @@ interface IBleViewModel {
     fun startBleScan()
     fun stopBleScan()
     fun disconnectDevice()
-    fun sendCustomCommand(command: String)
     fun toggleLightsLoop()
     fun sendGearSelectedCommand(leftGear: Int, rightGear: Int)
     fun sendTurretAngleSelectedCommand(angle: Int)
+    fun sendCommand(command: String, attempt: Int = 1)
 }
 
 class BleViewModel(application: Application) : AndroidViewModel(application), IBleViewModel {
@@ -248,25 +248,6 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
         bleManager.disconnect()
     }
 
-    override fun sendCustomCommand(command: String) {
-        if (_connectionStatus.value == "Ready" || _connectionStatus.value == "Connected") {
-            addLog("Sending custom command: $command")
-            val success = bleManager.writeCharacteristic(
-                BleConstants.ECHO_SERVICE_UUID,
-                BleConstants.ECHO_CHARACTERISTIC_UUID,
-                command.toByteArray(Charsets.UTF_8)
-            )
-            if (!success) {
-                addLog("Failed to initiate custom command send.", Log.WARN)
-            }
-        } else {
-            addLog(
-                "Cannot send custom command: Not connected or ready. Status: ${_connectionStatus.value}",
-                Log.WARN
-            )
-        }
-    }
-
     override fun toggleLightsLoop() {
         addLog("Toggle lights loop requested.", Log.INFO)
         if (_isLightsLoopUiActive.value) { // Reading StateFlow value
@@ -319,7 +300,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application), IB
         sendCommand(commandString)
     }
 
-    private fun sendCommand(command: String, attempt: Int = 1) {
+    override fun sendCommand(command: String, attempt: Int) {
         addLog("Attempting to send command: '$command' (Attempt: $attempt)", Log.DEBUG)
 
         if (_connectionStatus.value != "Ready" && _connectionStatus.value != "Connected") {

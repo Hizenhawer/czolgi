@@ -44,12 +44,6 @@ class FakeBleViewModel : IBleViewModel {
         _operationLog.value.append("Preview: Device Disconnected\n")
     }
 
-    override fun sendCustomCommand(command: String) {
-        Log.d("FakeBleViewModel", "Preview: sendCustomCommand('$command') called")
-        _operationLog.value.append("Preview: Sent command '$command'\n")
-        _receivedData.value = "Preview: Echo of '$command'"
-    }
-
     override fun toggleLightsLoop() {
         Log.d("FakeBleViewModel", "Preview: toggleLightsLoop() called")
         val current = _isLightsLoopUiActive.value
@@ -63,6 +57,10 @@ class FakeBleViewModel : IBleViewModel {
     }
 
     override fun sendTurretAngleSelectedCommand(angle: Int) {
+        TODO("Not yet implemented")
+    }
+
+    override fun sendCommand(command: String, attempt: Int) {
         TODO("Not yet implemented")
     }
 }
