@@ -35,14 +35,15 @@ fun TankTrackSlider(
     onVisualGearChange: (Float) -> Unit, // Callback to update the visual position
     onGearSelected: (Int) -> Unit,    // Callback for when an integer gear is selected
     modifier: Modifier = Modifier,
-    minGear: Int = MIN_GEAR,
-    maxGear: Int = MAX_GEAR,
+    minGear: Int,
+    maxGear: Int,
     thumbColor: Color = MaterialTheme.colorScheme.primary,
     trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
     activeTrackColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
     labelColor: Color = Color.White,
     snapThreshold: Float = 0.4f,
-    labelsOnLeft: Boolean = false
+    labelsOnLeft: Boolean = false,
+    autoResetToZero: Boolean
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -74,67 +75,83 @@ fun TankTrackSlider(
                 .pointerInput(Unit) {
                     coroutineScope {
                         awaitEachGesture {
-                            val down: PointerInputChange = awaitFirstDown()
+                            val down: PointerInputChange =
+                                awaitFirstDown().also { it.consume() } // Consume the down event
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                            val dragStartY = down.position.y
-                            val visualGearAtDragStart = currentVisualGear
-                            var currentDragRoundedGear =
-                                currentVisualGear.roundToInt() // Track rounded gear for this drag
+                            // Determine the visual gear based on the initial touch down position
+                            // This makes the thumb "jump" to where the user first touches, then drag from there.
+                            val initialPointerY = down.position.y
+                            val gearChangePerPixel =
+                                if (sliderHeightPx != 0f) gearRange.toFloat() / sliderHeightPx else 0f
 
-                            // Initialize lastReportedGear based on the state when the drag starts,
-                            // if it hasn't been set or to ensure it's current.
-                            lastReportedGear = currentVisualGear.roundToInt()
+                            // Calculate the gear directly from the initial touch position
+                            // Y position 0 is at the top (maxGear), sliderHeightPx is at the bottom (minGear)
+                            var currentGestureVisualGear =
+                                minGear + ((sliderHeightPx - initialPointerY) * gearChangePerPixel)
+                            currentGestureVisualGear = currentGestureVisualGear.coerceIn(
+                                minGear.toFloat(),
+                                maxGear.toFloat()
+                            )
 
+                            onVisualGearChange(currentGestureVisualGear) // Update visual state immediately to the touch point
+
+                            var currentGestureRoundedGear = currentGestureVisualGear.roundToInt()
+                            if (currentGestureRoundedGear != lastReportedGear) {
+                                onGearSelected(currentGestureRoundedGear)
+                                lastReportedGear = currentGestureRoundedGear
+                            }
 
                             verticalDrag(down.id) { change: PointerInputChange ->
                                 change.consume()
-                                val dragDeltaYFromStart = change.position.y - dragStartY
-                                val gearChangePerPixel =
-                                    if (sliderHeightPx != 0f) gearRange.toFloat() / sliderHeightPx else 0f
-                                val newVisualGearRaw =
-                                    visualGearAtDragStart - (dragDeltaYFromStart * gearChangePerPixel)
-                                val newVisualGearCoerced =
-                                    newVisualGearRaw.coerceIn(minGear.toFloat(), maxGear.toFloat())
 
-                                onVisualGearChange(newVisualGearCoerced) // Update visual state continuously
+                                // Calculate the new gear directly from the current pointer's Y position
+                                val pointerY = change.position.y
+                                var newVisualGear =
+                                    minGear + ((sliderHeightPx - pointerY) * gearChangePerPixel)
+                                newVisualGear =
+                                    newVisualGear.coerceIn(minGear.toFloat(), maxGear.toFloat())
 
-                                val newRoundedGear = newVisualGearCoerced.roundToInt()
-                                if (newRoundedGear != currentDragRoundedGear) { // Changed integer gear during this drag
+                                onVisualGearChange(newVisualGear) // Update visual state continuously
+
+                                val newRoundedGear = newVisualGear.roundToInt()
+                                if (newRoundedGear != currentGestureRoundedGear) { // If integer gear changed during this drag
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    // Call onGearSelected only if it's a new integer gear compared to the last reported one
                                     if (newRoundedGear != lastReportedGear) {
                                         onGearSelected(newRoundedGear)
                                         lastReportedGear = newRoundedGear
                                     }
-                                    currentDragRoundedGear =
-                                        newRoundedGear // Update for current drag
+                                    currentGestureRoundedGear = newRoundedGear
                                 }
                             }
 
-                            // Drag has ended, now apply snapping
-                            val finalVisualGearAfterDrag =
-                                currentVisualGear // Get the latest visual gear
-                            val roundedFinalVisualGear = finalVisualGearAfterDrag.roundToInt()
-                            val snappedVisualGear = when {
-                                abs(finalVisualGearAfterDrag) <= snapThreshold -> 0f
-                                abs(finalVisualGearAfterDrag - maxGear) <= snapThreshold -> maxGear.toFloat()
-                                abs(finalVisualGearAfterDrag - minGear) <= snapThreshold -> minGear.toFloat()
-                                else -> roundedFinalVisualGear.toFloat()
-                            }
-                            val finalVisualGear =
-                                snappedVisualGear.coerceIn(minGear.toFloat(), maxGear.toFloat())
+                            // Drag has ended
+                            // currentVisualGear is already updated via onVisualGearChange from the last drag event
+                            val finalVisualGearAfterInteraction = currentVisualGear
+                            val finalRoundedGearAfterInteraction =
+                                finalVisualGearAfterInteraction.roundToInt()
 
-                            onVisualGearChange(finalVisualGear) // Update visual to the snapped position
+                            if (autoResetToZero) {
+                                val snappedVisualGear = when {
+                                    abs(finalVisualGearAfterInteraction) <= snapThreshold -> 0f
+                                    abs(finalVisualGearAfterInteraction - maxGear) <= snapThreshold -> maxGear.toFloat()
+                                    abs(finalVisualGearAfterInteraction - minGear) <= snapThreshold -> minGear.toFloat()
+                                    else -> finalRoundedGearAfterInteraction.toFloat()
+                                }
+                                val finalVisualGearForReset =
+                                    snappedVisualGear.coerceIn(minGear.toFloat(), maxGear.toFloat())
 
-                            val finalSelectedGear = finalVisualGear.roundToInt()
-                            if (finalSelectedGear != currentDragRoundedGear) { // If snapping changed the integer gear
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                            // Always report the final selected integer gear after snapping if it's different from last reported
-                            if (finalSelectedGear != lastReportedGear) {
-                                onGearSelected(finalSelectedGear)
-                                lastReportedGear = finalSelectedGear
+                                onVisualGearChange(finalVisualGearForReset)
+                                val finalSelectedGearAfterReset =
+                                    finalVisualGearForReset.roundToInt()
+
+                                if (finalSelectedGearAfterReset != currentGestureRoundedGear && finalSelectedGearAfterReset != finalRoundedGearAfterInteraction) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                                if (finalSelectedGearAfterReset != lastReportedGear) {
+                                    onGearSelected(finalSelectedGearAfterReset)
+                                    lastReportedGear = finalSelectedGearAfterReset
+                                }
                             }
                         }
                     }

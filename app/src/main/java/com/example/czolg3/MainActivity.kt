@@ -188,7 +188,9 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
             route = AppDestinations.MANUAL_CONTROLS_GRAPH_ROUTE // Route to this sub-graph
         ) {
             composable(AppDestinations.MANUAL_CONTROLS_FULL_SCREEN_ROUTE) {
-                FullScreen(bleViewModel = bleViewModel) // Pass the same top-level controller
+                FullScreen(
+                    bleViewModel = bleViewModel
+                ) // Pass the same top-level controller
             }
             // Add other fullscreen destinations here if you have more
             // Example:
@@ -291,7 +293,6 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
                 ScaffoldContentNavHost(
                     modifier = Modifier.padding(paddingValues),
                     scaffoldNavController = scaffoldContentNavController, // The nested NavController
-                    mainNavController = mainNavController,               // The top-level NavController (for navigating to fullscreen)
                     bleViewModel = bleViewModel
                 )
             }
@@ -303,7 +304,6 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
     fun ScaffoldContentNavHost(
         modifier: Modifier = Modifier,
         scaffoldNavController: NavHostController, // For navigation within scaffolded screens
-        mainNavController: NavHostController,   // For navigation to other graphs (e.g., fullscreen)
         bleViewModel: BleViewModel
     ) {
         NavHost(
@@ -473,7 +473,7 @@ class MainActivity : ComponentActivity() { // Note: ComponentActivity is base fo
         } else {
             listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH)
         }
-        var showRationale = permissionsToExplain.any {
+        val showRationale = permissionsToExplain.any {
             ActivityCompat.shouldShowRequestPermissionRationale(
                 this,
                 it
